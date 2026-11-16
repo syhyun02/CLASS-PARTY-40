@@ -1,4 +1,4 @@
-import RAPIER from '@dimforge/rapier3d-compat';
+import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import { io, type Socket } from 'socket.io-client';
 import {
   DT, FLAG_HIDDEN, NO_INPUT, SimWorld, TICK_RATE, buildLevel, decodeSnapshot, newPlayerState, unpackState,
@@ -6,6 +6,7 @@ import {
   type GameStateMsg, type PersonalMsg, type RoomState, type SelfMsg, type SnapPlayer,
 } from '@shared';
 import { actionHeld, input, jumpHeld, resetCamera, worldMove } from './input';
+import { play } from './sound';
 import { useStore } from './store';
 
 /** 다른 플레이어를 그릴 때 쓰는 값 */
@@ -19,8 +20,10 @@ interface Pending { seq: number; input: PlayerInput; canMove: boolean }
 const INTERP_DELAY = 3.2; // 틱. 스냅샷 간격(2틱)보다 조금 길게 잡아 끊김을 줄인다
 const MAX_PENDING = 45;
 
+// 물리 엔진(약 2MB)은 입장할 때 내려받는다. 첫 화면이 빨리 뜨도록 미리 묶지 않는다.
+let RAPIER: typeof RAPIER_NS;
 let rapierReady: Promise<void> | null = null;
-const initRapier = () => (rapierReady ??= RAPIER.init());
+const initRapier = () => (rapierReady ??= import('@dimforge/rapier3d-compat').then(async (m) => { RAPIER = m.default; await RAPIER.init(); }));
 
 /**
  * 네트워크와 예측을 담당한다(React 바깥).
@@ -52,6 +55,7 @@ class GameNet {
   private err = { x: 0, y: 0, z: 0 }; // 보정 때 화면이 튀지 않게 남겨 두는 오차
   private synced = false;
   private obstacleTick = 0;
+  private actionWas = false;
   stats = { corrections: 0, lastError: 0, pending: 0 };
 
   private out: RenderPlayer[] = [];
@@ -72,6 +76,7 @@ class GameNet {
       if (m.pass) useStore.setState({ mine: { passed: m.pass.q + 1, wrong: cur.wrong, explain: { q: m.pass.q, text: m.pass.explain, first: m.pass.first } } });
       else if (m.wrong) useStore.setState({ mine: { ...cur, wrong: [...cur.wrong, m.wrong] } });
     });
+    s.on('notice', (text: string) => { useStore.setState({ notice: text }); setTimeout(() => useStore.setState({ notice: null }), 6000); });
     s.on('kicked', () => this.exit('선생님이 내보냈어요.'));
     s.on('replaced', () => this.exit('다른 기기에서 같은 이름으로 접속했어요.'));
     setInterval(() => {
@@ -237,8 +242,9 @@ class GameNet {
 
     if (error > 0.03) {
       // 예측이 서버와 달랐다 → 서버 상태에서 다시 시작해 아직 처리 안 된 입력을 재생한다
-      const bx = me.x, by = me.y, bz = me.z;
+      const bx = me.x, by = me.y, bz = me.z, stunBefore = me.stun;
       unpackState(m.s, me);
+      if (this.synced && me.stun > stunBefore + 5) play('bonk'); // 서버에서만 판정하는 밀치기·오답 문에 맞았다
       let t = rel;
       for (const p of this.pending) {
         sim.setTick(++t);
@@ -317,8 +323,13 @@ class GameNet {
     const seq = ++this.seq;
     this.socket!.emit('in', [seq, mxq, mzq, (jump ? 1 : 0) | (action ? 2 : 0)]);
     this.prev.x = me.x; this.prev.y = me.y; this.prev.z = me.z;
+    const vy0 = me.vy, stun0 = me.stun;
     sim.setTick(++this.predTick);
     sim.stepPlayer(me, inp, useStore.getState().myId!, canMove);
+    if (me.vy > 8 && vy0 <= 0.5) play(me.vy > 12 ? 'reveal' : 'jump', 0.8); // 점프 / 점프 발판
+    if (me.stun > stun0 + 5) play('bonk');
+    if (action && !this.actionWas && canMove) play('push', 0.8);
+    this.actionWas = action;
     this.pending.push({ seq, input: inp, canMove });
     this.history.set(seq, [me.x, me.y, me.z]);
   }

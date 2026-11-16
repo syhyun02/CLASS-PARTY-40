@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { GAMES, QUIZ_PADS, chemRowZ, getGame, type RoomState, type RoundRow } from '@shared';
 import { net } from '../game/net';
+import { play, setMusicPref, setSfx, soundPrefs } from '../game/sound';
 import { setQuality, useStore, type Quality } from '../game/store';
 import { useSecondsLeft, useTicker } from './hooks';
 
@@ -24,6 +25,7 @@ export function DrawOverlay({ room }: { room: RoomState }) {
   const spinning = left > 2.6;
   const e = Math.max(0, 6 - left); // 시계 동기화 전에는 남은 시간이 6초를 넘을 수 있다
   const shown = (spinning ? pool[Math.floor(e * (4 + e * 2.2)) % pool.length] : game) ?? game ?? GAMES[0];
+  useEffect(() => { play(spinning ? 'tick' : 'reveal'); }, [shown?.id, spinning]);
   return (
     <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-grape/70 p-4 backdrop-blur-sm">
       <div className="chip animate-rise">ROUND {room.round} / {room.config.rounds}</div>
@@ -41,6 +43,7 @@ export function CountdownOverlay({ room }: { room: RoomState }) {
   const left = useSecondsLeft(20);
   const n = Math.ceil(left - 1);
   const game = getGame(room.gameId ?? '');
+  useEffect(() => { if (n > 0 && n <= 3) play('beep'); }, [n]);
   return (
     <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2">
       <div className="chip">{game?.emoji} {game?.name}</div>
@@ -260,7 +263,7 @@ export function GameHud({ room, myId }: { room: RoomState; myId: number | null }
   return <SurvivalHud room={room} myId={myId} />;
 }
 
-function Row({ r, me, showPoints }: { r: RoundRow; me: boolean; showPoints: boolean }) {
+function Row({ r, me, showPoints, delta }: { r: RoundRow; me: boolean; showPoints: boolean; delta?: number }) {
   return (
     <div className={`flex items-center gap-2 rounded-2xl px-3 py-1.5 ${me ? 'bg-lemon' : 'bg-white/80'}`}>
       <div className="w-8 text-center font-display text-lg tabular-nums">{r.rank}</div>
@@ -268,6 +271,7 @@ function Row({ r, me, showPoints }: { r: RoundRow; me: boolean; showPoints: bool
       <div className="min-w-0 flex-1 truncate font-display">{r.name}</div>
       {showPoints && <div className="hidden text-sm opacity-70 sm:block">{r.detail}</div>}
       {showPoints && <div className="w-12 text-right font-display text-bubble tabular-nums">+{r.points}</div>}
+      {delta !== undefined && delta !== 0 && <div className={`w-9 text-right text-sm font-display tabular-nums ${delta > 0 ? 'text-[#2f9e44]' : 'text-bubble'}`}>{delta > 0 ? `▲${delta}` : `▼${-delta}`}</div>}
       <div className="w-14 text-right font-display tabular-nums">{r.total}</div>
     </div>
   );
@@ -283,6 +287,16 @@ export function standings(room: RoomState): RoundRow[] {
   });
 }
 
+/** 이번 라운드 전의 누적 순위(순위 변동 화살표용) */
+function previousRanks(room: RoomState): Map<number, number> {
+  const last = new Map((room.lastResult ?? []).map((r) => [r.id, r.points]));
+  const before = [...room.players].map((p) => ({ id: p.id, v: p.score - (last.get(p.id) ?? 0) })).sort((a, b) => b.v - a.v);
+  const out = new Map<number, number>();
+  let rank = 0, prev = -1;
+  before.forEach((p, i) => { if (p.v !== prev) { rank = i + 1; prev = p.v; } out.set(p.id, rank); });
+  return out;
+}
+
 export function ResultOverlay({ room, myId }: { room: RoomState; myId: number | null }) {
   const left = useSecondsLeft(4);
   const [tab, setTab] = useState<'round' | 'total'>('round');
@@ -292,6 +306,8 @@ export function ResultOverlay({ room, myId }: { room: RoomState; myId: number | 
   const top = rows.slice(0, 8);
   const mine = rows.find((r) => r.id === myId);
   const game = getGame(room.gameId ?? '');
+  const prevRank = useMemo(() => previousRanks(room), [room.lastResult]);
+  const delta = (r: RoundRow) => (tab === 'total' && room.round > 1 ? (prevRank.get(r.id) ?? r.rank) - r.rank : undefined);
   return (
     <div className="absolute inset-0 z-20 flex items-center justify-center bg-ink/45 p-3 backdrop-blur-sm">
       <div className="card flex max-h-full w-[min(560px,96vw)] flex-col gap-2 overflow-hidden animate-pop">
@@ -303,8 +319,8 @@ export function ResultOverlay({ room, myId }: { room: RoomState; myId: number | 
           </div>
         </div>
         <div className="flex flex-col gap-1 overflow-y-auto">
-          {top.map((r) => <Row key={r.id} r={r} me={r.id === myId} showPoints={tab === 'round'} />)}
-          {mine && !top.includes(mine) && <><div className="text-center leading-none opacity-50">⋮</div><Row r={mine} me showPoints={tab === 'round'} /></>}
+          {top.map((r, i) => <div key={r.id} className="animate-rise" style={{ animationDelay: `${i * 0.05}s` }}><Row r={r} me={r.id === myId} showPoints={tab === 'round'} delta={delta(r)} /></div>)}
+          {mine && !top.includes(mine) && <><div className="text-center leading-none opacity-50">⋮</div><Row r={mine} me showPoints={tab === 'round'} delta={delta(mine)} /></>}
         </div>
         <div className="text-center text-sm opacity-70">
           {room.round >= room.config.rounds ? '곧 시상식이 시작돼요' : `다음 게임 추첨까지 ${Math.ceil(left)}초`}
@@ -320,8 +336,15 @@ export function FinalOverlay({ room, myId, children }: { room: RoomState; myId: 
   const podium = [rows[1], rows[0], rows[2]];
   const heights = ['h-20', 'h-28', 'h-14'];
   const medals = ['🥈', '🥇', '🥉'];
-  const [open, setOpen] = useState(true);
-  if (!open) return <button className="btn-grape absolute left-1/2 top-3 z-20 -translate-x-1/2" onClick={() => setOpen(true)}>🏆 순위 보기</button>;
+  // 처음 5초는 3D 시상대를 보여 주고, 그 뒤에 순위표를 띄운다
+  const [open, setOpen] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setOpen(true), 5000); return () => clearTimeout(t); }, []);
+  if (!open) return (
+    <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex flex-col items-center gap-2">
+      <div className="card animate-pop px-6 py-2 font-display text-3xl">🎊 최종 시상식 🎊</div>
+      <button className="btn-grape pointer-events-auto !py-2 !text-base" onClick={() => setOpen(true)}>🏆 순위 보기</button>
+    </div>
+  );
   return (
     <div className="absolute inset-0 z-20 flex items-center justify-center bg-grape/60 p-3 backdrop-blur-sm">
       <div className="card flex max-h-full w-[min(760px,97vw)] flex-col gap-3 overflow-hidden">
@@ -344,25 +367,41 @@ export function FinalOverlay({ room, myId, children }: { room: RoomState; myId: 
         </div>
         <div className="flex flex-wrap items-center justify-center gap-2">
           {children}
-          <button className="btn-ghost !py-2 !text-base" onClick={() => setOpen(false)}>대기실 구경하기</button>
+          <button className="btn-ghost !py-2 !text-base" onClick={() => setOpen(false)}>시상대 보기</button>
         </div>
       </div>
     </div>
   );
 }
 
-export function SettingsButton() {
+export function SettingsButton({ host = false }: { host?: boolean }) {
   const quality = useStore((s) => s.quality);
+  useStore((s) => s.soundTick);
+  const studentSound = useStore((s) => s.room?.config.studentSound !== false);
   const [open, setOpen] = useState(false);
   const label: Record<Quality, string> = { low: '낮음', medium: '보통', high: '높음' };
+  const muted = !soundPrefs.sfx || (!host && !studentSound);
+  const full = typeof document !== 'undefined' && !!document.documentElement.requestFullscreen;
   return (
     <div className="absolute bottom-3 left-1/2 z-30 -translate-x-1/2 sm:bottom-auto sm:left-auto sm:right-3 sm:top-14 sm:translate-x-0">
-      <button className="chip" onClick={() => setOpen(!open)} aria-label="그래픽 설정">⚙ 화질 {label[quality]}</button>
+      <button className="chip" onClick={() => setOpen(!open)} aria-label="설정">⚙ {muted ? '🔇' : '🔊'} 화질 {label[quality]}</button>
       {open && (
-        <div className="card absolute bottom-10 left-1/2 flex -translate-x-1/2 gap-2 !p-3 sm:bottom-auto sm:left-auto sm:right-0 sm:top-10 sm:translate-x-0">
-          {(['low', 'medium', 'high'] as Quality[]).map((q) => (
-            <button key={q} className={`chip whitespace-nowrap ${q === quality ? '!bg-grape !text-white' : ''}`} onClick={() => { setQuality(q); setOpen(false); }}>{label[q]}</button>
-          ))}
+        <div className="card absolute bottom-10 left-1/2 flex w-max -translate-x-1/2 flex-col gap-2 !p-3 sm:bottom-auto sm:left-auto sm:right-0 sm:top-10 sm:translate-x-0">
+          <div className="flex items-center gap-2">
+            <span className="w-12 font-display text-sm">화질</span>
+            {(['low', 'medium', 'high'] as Quality[]).map((q) => (
+              <button key={q} className={`chip ${q === quality ? '!bg-grape !text-white' : ''}`} onClick={() => setQuality(q)}>{label[q]}</button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-12 font-display text-sm">소리</span>
+            <button className={`chip ${soundPrefs.sfx ? '!bg-mint' : ''}`} onClick={() => setSfx(!soundPrefs.sfx)}>{soundPrefs.sfx ? '🔊 효과음 켜짐' : '🔇 효과음 꺼짐'}</button>
+            {host && <button className={`chip ${soundPrefs.music ? '!bg-mint' : ''}`} onClick={() => setMusicPref(!soundPrefs.music)}>{soundPrefs.music ? '🎵 음악 켜짐' : '음악 꺼짐'}</button>}
+          </div>
+          {!host && !studentSound && <div className="text-xs opacity-70">선생님이 학생 기기 소리를 꺼 두었어요.</div>}
+          {full && (
+            <button className="chip self-start" onClick={() => { (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {}); setOpen(false); }}>⛶ 전체 화면</button>
+          )}
         </div>
       )}
     </div>
@@ -373,6 +412,7 @@ export function SettingsButton() {
 export function StatusOverlays({ room }: { room: RoomState | null }) {
   const online = useStore((s) => s.online);
   const lost = useStore((s) => s.contextLost);
+  const notice = useStore((s) => s.notice);
   if (lost) return (
     <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-ink/80 p-6 text-center text-white">
       <div className="font-display text-2xl">그래픽이 잠시 멈췄어요</div>
@@ -385,6 +425,11 @@ export function StatusOverlays({ room }: { room: RoomState | null }) {
       <div className="animate-floaty text-5xl">📡</div>
       <div className="font-display text-2xl">다시 연결하는 중…</div>
       <div className="opacity-80">점수와 자리는 그대로 남아 있어요</div>
+    </div>
+  );
+  if (notice) return (
+    <div className="pointer-events-none absolute inset-x-0 top-24 z-40 flex justify-center px-3">
+      <div className="card animate-pop !bg-lemon !py-2 font-display">{notice}</div>
     </div>
   );
   if (room?.paused) return (

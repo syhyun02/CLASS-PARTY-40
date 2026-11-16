@@ -6,3 +6,4 @@ export * from './protocol';
 export * from './levels/quiz';
 export * from './chem/bank';
 export * from './levels/maze';
+export * from './levels/lobby';

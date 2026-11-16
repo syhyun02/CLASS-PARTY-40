@@ -21,6 +21,8 @@ interface Store {
   autoQuality: boolean;
   isTouch: boolean;
   contextLost: boolean;
+  /** 소리 설정이 바뀌면 화면을 다시 그리기 위한 값 */
+  soundTick: number;
   set: (p: Partial<Store>) => void;
 }
 
@@ -39,6 +41,7 @@ export const useStore = create<Store>((set) => ({
   autoQuality: !savedQ,
   isTouch,
   contextLost: false,
+  soundTick: 0,
   set: (p) => set(p),
 }));
 

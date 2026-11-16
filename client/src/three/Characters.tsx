@@ -68,6 +68,8 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
   const anims = useRef(new Map<number, Anim>());
   const sprites = useRef(new Map<number, { sprite: THREE.Sprite; name: string }>());
   const camera = useThree((st) => st.camera);
+  const usedSet = useRef(new Set<number>());
+  const infoCache = useRef<{ src: unknown; map: Map<number, { id: number; name: string; color: string; score: number }> }>({ src: null, map: new Map() });
   const tailCache = useRef<{ src: number[] | undefined; set: Set<number> | null }>({ src: undefined, set: null });
 
   useEffect(() => () => { for (const t of sprites.current.values()) { t.sprite.material.map?.dispose(); t.sprite.material.dispose(); } }, []);
@@ -78,7 +80,9 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
     const st = useStore.getState();
     const room = st.room;
     const list = net.renderPlayers();
-    const info = new Map(room?.players.map((p) => [p.id, p]) ?? []);
+    // 방 상태가 바뀔 때만 조회용 표를 새로 만든다(매 프레임 새로 만들지 않는다)
+    if (infoCache.current.src !== room?.players) infoCache.current = { src: room?.players, map: new Map(room?.players.map((p) => [p.id, p]) ?? []) };
+    const info = infoCache.current.map;
     // 시상식에서는 1~3위가 기뻐하고 나머지는 시무룩해한다
     let podium: number[] = [];
     if (room?.phase === 'final') podium = [...room.players].sort((a, b) => b.score - a.score).slice(0, 3).map((p) => p.id);
@@ -86,7 +90,8 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
     const tailIds = st.game?.tails;
     if (tailIds !== tailCache.current.src) tailCache.current = { src: tailIds, set: tailIds ? new Set(tailIds) : null };
     const tails = room?.phase === 'playing' ? tailCache.current.set : null;
-    const used = new Set<number>();
+    const used = usedSet.current;
+    used.clear();
     let n = 0;
     let meShown = false;
     for (const p of list) {

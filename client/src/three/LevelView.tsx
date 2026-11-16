@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { chemDoorOrder, moverOffset, sweeperAngle, type LevelDef, type Tile } from '@shared';
 import { net } from '../game/net';
+import { play } from '../game/sound';
 import { useStore } from '../game/store';
 
 const dummy = new THREE.Object3D();
@@ -302,8 +303,9 @@ function Bombs({ level }: { level: LevelDef }) {
   const disc = useMemo(() => new THREE.CircleGeometry(1, 40).rotateX(-Math.PI / 2), []);
   const ring = useMemo(() => new THREE.RingGeometry(0.93, 1, 48).rotateX(-Math.PI / 2), []);
   const start = useRef(0);
+  const boomed = useRef(-1);
 
-  useFrame(() => {
+  useFrame((state) => {
     if (!bombs.length) return; // 폭탄이 없는 맵에서는 메시도 없다
     const t = net.levelTime();
     let n = 0, nb = 0;
@@ -334,6 +336,12 @@ function Bombs({ level }: { level: LevelDef }) {
         edge.current.setMatrixAt(n, dummy.matrix);
         n++;
       } else if (left > -0.45 && nb < MAX) {
+        if (i > boomed.current) {
+          // 가까울수록 크게 들린다
+          boomed.current = i;
+          const d = state.camera.position.distanceTo(dummy.position.set(b.p[0], b.p[1], b.p[2]));
+          play('boom', Math.max(0.15, 1 - d / 26));
+        }
         const k = -left / 0.45;
         dummy.rotation.set(0, 0, 0);
         dummy.position.set(b.p[0], b.p[1] + 0.3, b.p[2]);
@@ -506,6 +514,40 @@ function Items({ level }: { level: LevelDef }) {
   return (
     <instancedMesh ref={mesh} args={[geo, undefined, items.length]} frustumCulled={false}>
       <meshLambertMaterial flatShading />
+    </instancedMesh>
+  );
+}
+
+/** 시상식 색종이: 시상대 위에서 팔랑팔랑 떨어진다. */
+export function Confetti({ z }: { z: number }) {
+  const low = useStore((s) => s.quality === 'low');
+  const n = low ? 60 : 160;
+  const mesh = useRef<THREE.InstancedMesh>(null!);
+  const geo = useMemo(() => new THREE.PlaneGeometry(0.22, 0.12), []);
+  const bits = useMemo(() => Array.from({ length: n }, (_, i) => ({
+    x: (Math.random() * 2 - 1) * 9, z: z + (Math.random() * 2 - 1) * 5 - 2, y: Math.random() * 12,
+    v: 1.4 + Math.random() * 1.6, s: Math.random() * 6.28, c: CANDY[i % CANDY.length],
+  })), [n, z]);
+  useLayoutEffect(() => {
+    bits.forEach((b, i) => mesh.current.setColorAt(i, col.set(b.c)));
+    if (mesh.current.instanceColor) mesh.current.instanceColor.needsUpdate = true;
+  }, [bits]);
+  useFrame((state, dt) => {
+    const t = state.clock.elapsedTime;
+    bits.forEach((b, i) => {
+      b.y -= b.v * Math.min(0.05, dt);
+      if (b.y < 0) b.y = 11 + Math.random() * 2;
+      dummy.position.set(b.x + Math.sin(t * 1.5 + b.s) * 0.5, b.y, b.z);
+      dummy.rotation.set(t * 3 + b.s, t * 2 + b.s * 2, b.s);
+      dummy.scale.setScalar(1);
+      dummy.updateMatrix();
+      mesh.current.setMatrixAt(i, dummy.matrix);
+    });
+    mesh.current.instanceMatrix.needsUpdate = true;
+  });
+  return (
+    <instancedMesh ref={mesh} args={[geo, undefined, n]} frustumCulled={false}>
+      <meshBasicMaterial side={THREE.DoubleSide} />
     </instancedMesh>
   );
 }

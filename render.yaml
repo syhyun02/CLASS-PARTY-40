@@ -1,0 +1,10 @@
+# Render 배포 설정(Blueprint). Render 대시보드에서 New → Blueprint로 이 저장소를 연결하면 그대로 만들어진다.
+services:
+  - type: web
+    name: class-party-40
+    runtime: docker
+    region: singapore
+    plan: starter # 40명 수업용. 혼자 확인만 할 때는 free로 바꿔도 된다
+    healthCheckPath: /healthz
+    numInstances: 1 # 방 정보가 서버 메모리에 있으므로 반드시 1대
+    autoDeploy: true

@@ -34,6 +34,8 @@ export interface RoomConfig {
   games: string[]; // 추첨에 넣을 미니게임 id
   /** 화학 모드 출제 범위(단원, 난이도) */
   chem?: ChemFilter;
+  /** 학생 기기에서 소리를 낼지(교사가 수업 중에 끌 수 있다). 기본 true */
+  studentSound?: boolean;
 }
 
 export interface RoomState {
@@ -72,7 +74,8 @@ export type HostCmd =
   | { type: 'start' } | { type: 'pause' } | { type: 'resume' } | { type: 'skip' }
   | { type: 'end' } | { type: 'toLobby' } | { type: 'kick'; id: number }
   | { type: 'config'; config: RoomConfig }
-  | { type: 'bank'; bank: BankQ[] };
+  | { type: 'bank'; bank: BankQ[] }
+  | { type: 'sound'; on: boolean };
 
 /** 클라이언트 → 서버 입력: [seq, mx(-127~127), mz, 버튼비트] */
 export type InputMsg = [number, number, number, number];

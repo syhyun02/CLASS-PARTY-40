@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PLAYER_COLORS, getGame } from '@shared';
 import { net } from '../game/net';
 import { useStore } from '../game/store';
@@ -15,6 +15,17 @@ export function PlayScreen() {
   const portrait = usePortrait();
   const [skipRotate, setSkipRotate] = useState(false);
   const [colors, setColors] = useState(false);
+  // 경기 중에 휴대폰 화면이 꺼지지 않게 한다(지원하는 브라우저에서만). 다른 앱에 다녀오면 다시 요청한다.
+  useEffect(() => {
+    let lock: { release: () => Promise<void> } | null = null;
+    const req = () => {
+      const wl = (navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock;
+      if (document.visibilityState === 'visible') wl?.request('screen').then((l) => { lock = l; }).catch(() => {});
+    };
+    req();
+    document.addEventListener('visibilitychange', req);
+    return () => { document.removeEventListener('visibilitychange', req); lock?.release().catch(() => {}); };
+  }, []);
   if (!room) return <div className="party-bg flex h-full items-center justify-center font-display text-2xl">불러오는 중…</div>;
   const mine = room.players.find((p) => p.id === myId);
   const late = !!mine && !mine.active; // 경기 도중 입장

@@ -2,7 +2,7 @@ import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import type { Server, Socket } from 'socket.io';
 import {
   COUNTDOWN_SEC, DT, FLAG_ACT, FLAG_DONE, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_MOVING, FLAG_STUN, MAX_PLAYERS, NO_INPUT, PLAYER_COLORS, PLAYER_RADIUS,
-  DEFAULT_BANK, SNAPSHOT_EVERY, SimWorld, TICK_RATE, buildLevel, cleanBank, pickQuestions, encodeSnapshot, getGame, newPlayerState, packState,
+  DEFAULT_BANK, PODIUM, PODIUM_Z, SNAPSHOT_EVERY, SimWorld, TICK_RATE, buildLevel, cleanBank, pickQuestions, encodeSnapshot, getGame, newPlayerState, packState,
   type HostCmd, type InputMsg, type JoinReq, type JoinRes, type LevelDef, type Phase, type PlayerInput,
   type BankQ, type PickedQ, type PlayerState, type QLevel, type RoomConfig, type RoomState, type RoundRow, type SelfMsg, type SnapPlayer,
 } from '@shared';
@@ -69,6 +69,8 @@ export class Room {
   private askedIds = new Set<string>();
   private gameDirty = false;
   lastActive = Date.now();
+  /** 연속으로 틱 오류가 난 횟수 */
+  faults = 0;
 
   constructor(private io: Server, private R: typeof RAPIER_NS, readonly code: string, public config: RoomConfig) {
     this.level = buildLevel('lobby', 0);
@@ -84,6 +86,7 @@ export class Room {
     this.config.games = this.config.games.filter((g) => ok.includes(g));
     if (this.config.games.length === 0) this.config.games = ok;
     this.config.rounds = Math.max(1, Math.min(20, Math.round(this.config.rounds) || 10));
+    this.config.studentSound = this.config.studentSound !== false;
     const c = this.config.chem;
     const units = (c?.units ?? []).filter((u) => u === 3 || u === 4);
     const levels = (c?.levels ?? []).filter((l): l is QLevel => l === 'easy' || l === 'normal' || l === 'hard');
@@ -165,6 +168,9 @@ export class Room {
   hostCmd(cmd: HostCmd) {
     this.lastActive = Date.now();
     switch (cmd.type) {
+      case 'sound':
+        this.config.studentSound = !!cmd.on;
+        break;
       case 'bank': {
         // 문제은행 교체: 쓸 수 있는 문제가 하나도 없으면 기본 문제를 유지한다
         const b = cleanBank(cmd.bank);
@@ -310,6 +316,13 @@ export class Room {
   private toFinal() {
     if (this.levelId !== 'lobby') this.setLevel('lobby', 0);
     for (const p of this.players.values()) { p.active = true; p.done = false; p.out = false; }
+    // 1~3위를 시상대 위에, 나머지는 시상대를 바라보게 세운다
+    const top = [...this.players.values()].sort((a, b) => b.score - a.score).slice(0, 3);
+    for (const p of this.players.values()) p.state.yaw = 0;
+    top.forEach((p, i) => {
+      p.state.x = PODIUM[i].x; p.state.z = PODIUM_Z; p.state.y = PODIUM[i].h * 2 + 0.05;
+      p.state.yaw = Math.PI; // 친구들 쪽을 본다
+    });
     this.setPhase('final', 0);
   }
 
@@ -452,6 +465,18 @@ export class Room {
       lastResult: this.lastResult,
       history: this.history,
     };
+  }
+
+  /** 경기 중 오류가 반복되면 점수는 그대로 두고 대기실로 돌려보낸다. */
+  recover() {
+    this.runtime = null;
+    this.faults = 0;
+    this.paused = false;
+    this.setLevel('lobby', 0);
+    this.setPhase('lobby', 0);
+    this.gameId = null;
+    for (const p of this.players.values()) { p.active = true; p.done = false; p.out = false; p.place = null; }
+    this.io.to(this.channel).emit('notice', '게임에 문제가 생겨 대기실로 돌아왔어요. 점수는 그대로예요.');
   }
 
   /** 교사 화면이 붙을 때 현재 틱을 알려 주기 위한 값 */

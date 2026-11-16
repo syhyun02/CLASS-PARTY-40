@@ -6,7 +6,7 @@ import { useStore } from '../game/store';
 import { Scene } from '../three/Scene';
 import { BankEditor } from './BankEditor';
 import { useSecondsLeft } from './hooks';
-import { Blob, CountdownOverlay, DrawOverlay, FinalOverlay, GameHud, ResultOverlay, StatusOverlays, standings } from './Overlays';
+import { Blob, CountdownOverlay, DrawOverlay, FinalOverlay, GameHud, ResultOverlay, SettingsButton, StatusOverlays, standings } from './Overlays';
 
 const PHASE_LABEL: Record<RoomState['phase'], string> = {
   lobby: '대기실', draw: '게임 추첨 중', countdown: '카운트다운', playing: '경기 중', result: '라운드 결과', final: '최종 시상식',
@@ -87,6 +87,7 @@ export function HostScreen() {
           </FinalOverlay>
         )}
         <button className="chip absolute bottom-3 left-3 z-30" onClick={() => setWide(!wide)}>{wide ? '◧ 진행 패널 보기' : '⛶ 경기 화면 크게'}</button>
+        <SettingsButton host />
         <StatusOverlays room={room} />
       </div>
 
@@ -111,6 +112,9 @@ export function HostScreen() {
               : <button className="btn-lemon" onClick={() => cmd({ type: 'pause' })}>⏸ 일시정지</button>)}
             {running && <button className="btn-ghost" onClick={() => cmd({ type: 'skip' })}>⏭ 넘기기</button>}
             {running && <button className="btn-grape col-span-2 !bg-ink" onClick={() => cmd({ type: 'end' })}>■ 강제 종료하고 시상식으로</button>}
+            <button className={`btn-ghost col-span-2 !py-2 !text-base ${room.config.studentSound === false ? 'opacity-70' : ''}`} onClick={() => cmd({ type: 'sound', on: room.config.studentSound === false })}>
+              {room.config.studentSound === false ? '🔇 학생 기기 소리 꺼짐 (눌러서 켜기)' : '🔊 학생 기기 소리 켜짐 (눌러서 끄기)'}
+            </button>
             {room.history.length > 0 && <button className="btn-mint col-span-2 !py-2 !text-base" onClick={() => downloadCsv(room)}>⬇ 결과 내려받기(CSV)</button>}
           </div>
 

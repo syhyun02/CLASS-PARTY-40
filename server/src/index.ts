@@ -1,3 +1,4 @@
+import compression from 'compression';
 import express from 'express';
 import { createServer } from 'node:http';
 import { networkInterfaces } from 'node:os';
@@ -16,6 +17,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 await RAPIER.init();
 
 const app = express();
+app.use(compression()); // 자바스크립트 묶음과 물리 엔진(WASM) 전송량을 줄인다
+app.get('/healthz', (_req, res) => res.send('ok')); // 배포 서비스의 상태 확인용
 const http = createServer(app);
 const io = new Server(http, {
   cors: { origin: true },
@@ -137,7 +140,13 @@ function loop() {
   let guard = 0;
   while (now >= next && guard++ < 5) {
     const t0 = performance.now();
-    for (const room of rooms.values()) room.step();
+    for (const room of rooms.values()) {
+      // 한 방에서 오류가 나도 서버와 다른 방은 계속 돌아가게 한다
+      try { room.step(); room.faults = 0; } catch (e) {
+        console.error(`방 ${room.code} 틱 오류:`, e);
+        if (++room.faults >= 3) { try { room.recover(); } catch (e2) { console.error('복구 실패, 방을 닫습니다:', e2); rooms.delete(room.code); } }
+      }
+    }
     recordTick(performance.now() - t0);
     next += stepMs;
   }
@@ -154,6 +163,13 @@ setInterval(() => {
     if (now - room.lastActive > 30 * 60_000) { room.dispose(); rooms.delete(code); }
   }
 }, 60_000);
+
+// 배포 서비스가 재시작할 때 연결을 정리하고 끝낸다
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(sig, () => { io.close(); http.close(() => process.exit(0)); setTimeout(() => process.exit(0), 1500).unref(); });
+}
+process.on('uncaughtException', (e) => console.error('처리되지 않은 오류:', e));
+process.on('unhandledRejection', (e) => console.error('처리되지 않은 거부:', e));
 
 http.listen(PORT, '0.0.0.0', () => {
   console.log(`CLASS PARTY 40 서버 실행 중 (포트 ${PORT}, ${TICK_RATE}Hz)`);

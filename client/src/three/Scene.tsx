@@ -1,12 +1,12 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { buildLevel } from '@shared';
+import { PODIUM_Z, buildLevel } from '@shared';
 import { input } from '../game/input';
 import { net } from '../game/net';
 import { setQuality, useStore } from '../game/store';
 import { Characters } from './Characters';
-import { LevelView } from './LevelView';
+import { Confetti, LevelView } from './LevelView';
 
 const target = new THREE.Vector3();
 const want = new THREE.Vector3();
@@ -44,6 +44,15 @@ function Driver({ spectator }: { spectator: boolean }) {
         target.set((sx / n) * 0.4, sy / n, sz / n);
         want.set(target.x, target.y + 14, target.z - 17);
       } else {
+        if (useStore.getState().room?.phase === 'final') {
+          // 시상식: 시상대를 정면에서 비춘다
+          target.set(0, 1.4, PODIUM_Z);
+          want.set(Math.sin(state.clock.elapsedTime * 0.3) * 2.5, 4.2, PODIUM_Z - 10.5);
+          camera.position.lerp(want, snap ? 1 : Math.min(1, dt * 2.5));
+          camera.lookAt(target);
+          first.current = false;
+          return;
+        }
         // 대기실·생존 게임: 경기장 전체를 천천히 돌며 내려다본다
         const a = state.clock.elapsedTime * (lobby ? 0.08 : 0.05);
         target.set(0, 0, 0);
@@ -107,6 +116,7 @@ function ContextWatch() {
 
 export function Scene({ spectator = false }: { spectator?: boolean }) {
   const quality = useStore((s) => s.quality);
+  const final = useStore((s) => s.room?.phase === 'final');
   const levelKey = useStore((s) => s.room?.levelKey);
   const levelId = useStore((s) => s.room?.levelId);
   const levelSeed = useStore((s) => s.room?.levelSeed);
@@ -134,6 +144,7 @@ export function Scene({ spectator = false }: { spectator?: boolean }) {
         <Driver spectator={spectator} />
         {level && <LevelView key={levelKey} level={level} />}
         <Characters nameRange={spectator ? 60 : 22} />
+        {final && <Confetti z={PODIUM_Z} />}
       </Canvas>
     </div>
   );
