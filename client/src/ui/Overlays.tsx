@@ -16,13 +16,14 @@ export function Blob({ color, size = 28 }: { color: string; size?: number }) {
 /** 랜덤 미니게임 추첨: 카드가 빠르게 돌아가다 뽑힌 게임에서 멈춘다. */
 export function DrawOverlay({ room }: { room: RoomState }) {
   const left = useSecondsLeft(20);
-  const game = getGame(room.gameId ?? '')!;
+  const game = getGame(room.gameId ?? '');
   const pool = useMemo(() => {
     const ids = room.config.games.length > 1 ? room.config.games : GAMES.map((g) => g.id); // 한 종뿐이면 연출용으로 전체를 돌린다
     return ids.map((id) => getGame(id)!).filter(Boolean);
   }, [room.config.games]);
   const spinning = left > 2.6;
-  const shown = spinning ? pool[Math.floor((6 - left) * (4 + (6 - left) * 2.2)) % pool.length] : game;
+  const e = Math.max(0, 6 - left); // 시계 동기화 전에는 남은 시간이 6초를 넘을 수 있다
+  const shown = (spinning ? pool[Math.floor(e * (4 + e * 2.2)) % pool.length] : game) ?? game ?? GAMES[0];
   return (
     <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-grape/70 p-4 backdrop-blur-sm">
       <div className="chip animate-rise">ROUND {room.round} / {room.config.rounds}</div>
@@ -30,7 +31,7 @@ export function DrawOverlay({ room }: { room: RoomState }) {
       <div key={spinning ? 'spin' : 'done'} className={`card flex w-[min(420px,86vw)] flex-col items-center gap-1 text-center ${spinning ? '' : 'animate-pop'}`}>
         <div className={`text-6xl ${spinning ? 'animate-wiggle' : 'animate-floaty'}`}>{shown.emoji}</div>
         <div className="font-display text-3xl">{shown.name}</div>
-        <div className={`text-base ${spinning ? 'opacity-0' : 'opacity-80'}`}>{game.howTo}</div>
+        <div className={`text-base ${spinning ? 'opacity-0' : 'opacity-80'}`}>{game?.howTo}</div>
       </div>
     </div>
   );

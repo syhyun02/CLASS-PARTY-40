@@ -6,8 +6,8 @@ import { net } from '../game/net';
 import { useStore } from '../game/store';
 
 /**
- * 오리지널 캐릭터 "몽글이": 둥근 몸, 짧은 팔다리, 머리 위 새싹 방울.
- * 40명을 부위별 InstancedMesh 6개(= 드로우콜 6번)로 그린다. 애니메이션은 전부 계산식이다.
+ * 오리지널 캐릭터 "몽글이": 달걀형 몸, 밝은 배, 큰 눈, 짧은 팔다리, 번호마다 다른 머리 장식.
+ * 40명을 부위별 InstancedMesh 7개(= 드로우콜 7번)로 그린다. 애니메이션은 전부 계산식이다.
  */
 interface Anim { x: number; y: number; z: number; speed: number; phase: number; groundY: number; yaw: number; seen: number; air: number }
 
@@ -21,6 +21,10 @@ const v = new THREE.Vector3();
 const s = new THREE.Vector3();
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 const col = new THREE.Color();
+const col2 = new THREE.Color();
+const WHITE = new THREE.Color('#ffffff');
+const LEAF = new THREE.Color('#40c057');
+const LIMBS = 8; // 발 2 + 손 2 + 배 1 + 머리 장식 3
 const ID_Q = new THREE.Quaternion();
 
 function part(mesh: THREE.InstancedMesh, i: number, x: number, y: number, z: number, sx: number, sy: number, sz: number) {
@@ -46,12 +50,13 @@ function makeNameTexture(name: string) {
 
 export function Characters({ nameRange = 22 }: { nameRange?: number }) {
   const quality = useStore((st) => st.quality);
-  const seg = quality === 'low' ? [10, 7] : [16, 12];
+  const seg = quality === 'low' ? [12, 8] : [24, 16];
   const sphere = useMemo(() => new THREE.SphereGeometry(1, seg[0], seg[1]), [seg[0], seg[1]]);
-  const small = useMemo(() => new THREE.SphereGeometry(1, 8, 6), []);
+  const small = useMemo(() => new THREE.SphereGeometry(1, quality === 'low' ? 8 : 12, quality === 'low' ? 6 : 9), [quality]);
   const disc = useMemo(() => new THREE.CircleGeometry(1, 16).rotateX(-Math.PI / 2), []);
   const bodies = useRef<THREE.InstancedMesh>(null!);
   const limbs = useRef<THREE.InstancedMesh>(null!);
+  const outlines = useRef<THREE.InstancedMesh>(null);
   const whites = useRef<THREE.InstancedMesh>(null!);
   const darks = useRef<THREE.InstancedMesh>(null!);
   const cheeks = useRef<THREE.InstancedMesh>(null!);
@@ -115,34 +120,73 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
         local.makeTranslation(0, 0.55, 0); root.premultiply(local);
       }
 
-      part(bodies.current, n, 0, 0.62, 0, 0.42, 0.5, 0.4);
+      // 몸통(달걀형) + 테두리 + 밝은 배
+      part(bodies.current, n, 0, 0.64, 0, 0.44, 0.54, 0.42);
       bodies.current.setColorAt(n, col.set(pi.color));
-      col.multiplyScalar(0.78);
-      const stride = Math.sin(a.phase) * 0.2 * run, lift = Math.max(0, Math.cos(a.phase)) * 0.12 * run;
-      const lift2 = Math.max(0, -Math.cos(a.phase)) * 0.12 * run;
+      if (outlines.current) part(outlines.current, n, 0, 0.64, 0, 0.475, 0.575, 0.455);
+      const L = n * LIMBS;
+      part(limbs.current, L + 4, 0, 0.5, 0.2, 0.34, 0.36, 0.26);
+      limbs.current.setColorAt(L + 4, col2.set(pi.color).lerp(WHITE, 0.45));
+      // 팔다리(몸보다 조금 진한 색)
+      col2.set(pi.color).multiplyScalar(0.8);
+      const stride = Math.sin(a.phase) * 0.22 * run, lift = Math.max(0, Math.cos(a.phase)) * 0.14 * run;
+      const lift2 = Math.max(0, -Math.cos(a.phase)) * 0.14 * run;
       const tuck = airborne ? 0.1 : 0;
-      const handUp = win ? 0.42 + Math.sin(time * 10 + p.id) * 0.06 : airborne || stun ? 0.3 : lose ? -0.12 : 0;
-      part(limbs.current, n * 4, -0.17, 0.1 + lift + tuck, stride, 0.13, 0.1, 0.17);
-      part(limbs.current, n * 4 + 1, 0.17, 0.1 + lift2 + tuck, -stride, 0.13, 0.1, 0.17);
-      part(limbs.current, n * 4 + 2, -0.46, 0.55 + handUp, -stride * 0.9, 0.11, 0.11, 0.11);
-      part(limbs.current, n * 4 + 3, 0.46, 0.55 + handUp, stride * 0.9, 0.11, 0.11, 0.11);
-      for (let k = 0; k < 4; k++) limbs.current.setColorAt(n * 4 + k, col);
+      const handUp = win ? 0.45 + Math.sin(time * 10 + p.id) * 0.06 : airborne || stun ? 0.32 : lose ? -0.12 : 0;
+      part(limbs.current, L, -0.19, 0.1 + lift + tuck, stride + 0.04, 0.15, 0.11, 0.2);
+      part(limbs.current, L + 1, 0.19, 0.1 + lift2 + tuck, -stride + 0.04, 0.15, 0.11, 0.2);
+      part(limbs.current, L + 2, -0.49, 0.56 + handUp, -stride * 0.9, 0.13, 0.13, 0.13);
+      part(limbs.current, L + 3, 0.49, 0.56 + handUp, stride * 0.9, 0.13, 0.13, 0.13);
+      for (let k = 0; k < 4; k++) limbs.current.setColorAt(L + k, col2);
 
-      // 표정: 넘어지면 눈이 휘둥그레, 기쁘면 웃는 눈, 평소엔 가끔 깜빡임
+      // 머리 장식: 번호마다 다른 모양(귀, 방울, 볏, 양갈래, 새싹)이라 멀리서도 구별된다
+      const bob = Math.sin(a.phase * 2) * 0.03 * run + (airborne ? 0.05 : 0);
+      const kind = p.id % 5;
+      for (let k = 5; k < 8; k++) limbs.current.setMatrixAt(L + k, ZERO);
+      if (kind === 0) {
+        part(limbs.current, L + 5, -0.27, 1.1 + bob, 0, 0.14, 0.14, 0.1);
+        part(limbs.current, L + 6, 0.27, 1.1 + bob, 0, 0.14, 0.14, 0.1);
+        limbs.current.setColorAt(L + 5, col2); limbs.current.setColorAt(L + 6, col2);
+      } else if (kind === 1) {
+        part(limbs.current, L + 5, 0, 1.25 + bob * 2, 0, 0.16, 0.16, 0.16);
+        limbs.current.setColorAt(L + 5, WHITE);
+      } else if (kind === 2) {
+        col2.set(pi.color).offsetHSL(0.5, 0, 0);
+        for (let k = 0; k < 3; k++) {
+          part(limbs.current, L + 5 + k, 0, 1.17 - Math.abs(k - 1) * 0.07 + bob, (k - 1) * 0.17, 0.07, 0.13, 0.11);
+          limbs.current.setColorAt(L + 5 + k, col2);
+        }
+      } else if (kind === 3) {
+        part(limbs.current, L + 5, -0.43, 0.98 + bob, -0.06, 0.16, 0.16, 0.16);
+        part(limbs.current, L + 6, 0.43, 0.98 + bob, -0.06, 0.16, 0.16, 0.16);
+        limbs.current.setColorAt(L + 5, col2); limbs.current.setColorAt(L + 6, col2);
+      } else {
+        part(limbs.current, L + 5, -0.11, 1.26 + bob * 2, 0, 0.13, 0.045, 0.08);
+        part(limbs.current, L + 6, 0.11, 1.26 + bob * 2, 0, 0.13, 0.045, 0.08);
+        part(limbs.current, L + 7, 0, 1.19 + bob, 0, 0.035, 0.07, 0.035);
+        for (let k = 5; k < 8; k++) limbs.current.setColorAt(L + k, LEAF);
+      }
+
+      // 표정: 넘어지면 눈이 휘둥그레, 기쁘면 웃는 눈과 벌린 입, 평소엔 가끔 깜빡임
       const blink = !stun && !win && (time * 0.6 + p.id * 0.37) % 1 > 0.95;
-      const eyeY = stun ? 0.135 : win || blink ? 0.03 : lose ? 0.07 : 0.11;
-      const eyeX = stun ? 0.135 : 0.1;
-      const pup = stun ? 0.035 : win || blink ? 0 : 0.055;
+      const eyeY = stun ? 0.16 : win || blink ? 0.03 : lose ? 0.08 : 0.135;
+      const eyeX = stun ? 0.15 : 0.115;
+      const pup = stun ? 0.035 : win || blink ? 0 : 0.068;
       const look = lose ? -0.04 : 0;
-      part(whites.current, n * 3, -0.15, 0.78, 0.335, eyeX, eyeY, 0.06);
-      part(whites.current, n * 3 + 1, 0.15, 0.78, 0.335, eyeX, eyeY, 0.06);
-      // 머리 위 새싹 방울(통통 튄다)
-      const bob = Math.sin(a.phase * 2) * 0.03 * run + (airborne ? 0.06 : 0);
-      part(whites.current, n * 3 + 2, 0, 1.2 + bob, -0.02, 0.085, 0.085, 0.085);
-      part(darks.current, n * 2, -0.15, 0.78 + look, 0.385, pup, pup, 0.03);
-      part(darks.current, n * 2 + 1, 0.15, 0.78 + look, 0.385, pup, pup, 0.03);
-      part(cheeks.current, n * 2, -0.27, 0.64, 0.27, 0.075, 0.045, 0.04);
-      part(cheeks.current, n * 2 + 1, 0.27, 0.64, 0.27, 0.075, 0.045, 0.04);
+      const W = n * 4;
+      part(whites.current, W, -0.16, 0.82, 0.325, eyeX, eyeY, 0.07);
+      part(whites.current, W + 1, 0.16, 0.82, 0.325, eyeX, eyeY, 0.07);
+      const hl = pup > 0.05 ? 0.024 : 0; // 눈동자 반짝임
+      part(whites.current, W + 2, -0.135, 0.862 + look, 0.425, hl, hl, 0.012);
+      part(whites.current, W + 3, 0.185, 0.862 + look, 0.425, hl, hl, 0.012);
+      const D = n * 3;
+      part(darks.current, D, -0.16, 0.825 + look, 0.375, pup, pup * 1.15, 0.035);
+      part(darks.current, D + 1, 0.16, 0.825 + look, 0.375, pup, pup * 1.15, 0.035);
+      // 입
+      const mw = win ? 0.075 : stun ? 0.045 : lose ? 0.05 : 0.04, mh = win ? 0.06 : stun ? 0.055 : 0.018;
+      part(darks.current, D + 2, 0, 0.665, 0.405, mw, mh, 0.03);
+      part(cheeks.current, n * 2, -0.29, 0.68, 0.275, 0.085, 0.05, 0.04);
+      part(cheeks.current, n * 2 + 1, 0.29, 0.68, 0.275, 0.085, 0.05, 0.04);
 
       // 바닥 그림자: 높이 뛸수록 작아져서 착지 지점을 가늠하게 해 준다
       const h = Math.max(0, p.y - a.groundY);
@@ -164,14 +208,14 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       const d = camera.position.distanceTo(v.set(p.x, p.y, p.z));
       tag.sprite.visible = !p.isMe && d < nameRange;
       if (tag.sprite.visible) {
-        tag.sprite.position.set(p.x, py + 1.62, p.z);
+        tag.sprite.position.set(p.x, py + 1.78, p.z);
         tag.sprite.material.opacity = Math.min(1, (nameRange - d) / 4);
         const k = nameRange > 30 ? Math.max(1, d / 16) : 1; // 교사용 원경에서는 글자를 키운다
         tag.sprite.scale.set(2.2 * k, 0.55 * k, 1);
       }
       if (p.isMe) {
         meShown = true;
-        marker.current.position.set(p.x, py + 1.75 + Math.sin(time * 4) * 0.08, p.z);
+        marker.current.position.set(p.x, py + 1.9 + Math.sin(time * 4) * 0.08, p.z);
         marker.current.rotation.y = time * 2;
       }
       n++;
@@ -185,33 +229,40 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       m.instanceMatrix.needsUpdate = true;
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     };
-    set(bodies.current, n); set(limbs.current, n * 4); set(whites.current, n * 3);
-    set(darks.current, n * 2); set(cheeks.current, n * 2); set(shadows.current, n);
+    set(bodies.current, n); set(limbs.current, n * LIMBS); set(whites.current, n * 4);
+    if (outlines.current) set(outlines.current, n);
+    set(darks.current, n * 3); set(cheeks.current, n * 2); set(shadows.current, n);
   });
 
   const shadow = quality === 'high';
+  const low = quality === 'low';
   return (
     <group>
       <instancedMesh ref={bodies} args={[sphere, undefined, N]} frustumCulled={false} castShadow={shadow}>
-        <meshLambertMaterial />
+        {low ? <meshLambertMaterial /> : <meshStandardMaterial roughness={0.42} metalness={0} />}
       </instancedMesh>
-      <instancedMesh ref={limbs} args={[small, undefined, N * 4]} frustumCulled={false} castShadow={shadow}>
-        <meshLambertMaterial />
+      {!low && (
+        <instancedMesh ref={outlines} args={[sphere, undefined, N]} frustumCulled={false}>
+          <meshBasicMaterial color="#2b2145" side={THREE.BackSide} />
+        </instancedMesh>
+      )}
+      <instancedMesh ref={limbs} args={[small, undefined, N * LIMBS]} frustumCulled={false} castShadow={shadow}>
+        {low ? <meshLambertMaterial /> : <meshStandardMaterial roughness={0.5} metalness={0} />}
       </instancedMesh>
-      <instancedMesh ref={whites} args={[small, undefined, N * 3]} frustumCulled={false}>
-        <meshLambertMaterial color="#ffffff" emissive="#555555" />
+      <instancedMesh ref={whites} args={[small, undefined, N * 4]} frustumCulled={false}>
+        <meshBasicMaterial color="#ffffff" />
       </instancedMesh>
-      <instancedMesh ref={darks} args={[small, undefined, N * 2]} frustumCulled={false}>
+      <instancedMesh ref={darks} args={[small, undefined, N * 3]} frustumCulled={false}>
         <meshBasicMaterial color="#2b2145" />
       </instancedMesh>
       <instancedMesh ref={cheeks} args={[small, undefined, N * 2]} frustumCulled={false}>
-        <meshBasicMaterial color="#ff8fb3" transparent opacity={0.75} />
+        <meshBasicMaterial color="#ff6f9f" transparent opacity={0.7} depthWrite={false} />
       </instancedMesh>
       <instancedMesh ref={shadows} args={[disc, undefined, N]} frustumCulled={false} renderOrder={1}>
-        <meshBasicMaterial color="#3b2f63" transparent opacity={0.28} depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
+        <meshBasicMaterial color="#1f1640" transparent opacity={0.3} depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
       </instancedMesh>
       <mesh ref={marker} visible={false}>
-        <coneGeometry args={[0.16, 0.3, 4]} />
+        <coneGeometry args={[0.18, 0.34, 4]} />
         <meshBasicMaterial color="#ffd84d" />
       </mesh>
       <group ref={tags} />

@@ -78,34 +78,10 @@ function Sun({ shadows }: { shadows: boolean }) {
   });
   return (
     <directionalLight
-      ref={ref} intensity={1.5} castShadow={shadows}
+      ref={ref} intensity={shadows ? 2.3 : 2.0} color="#fff4e0" castShadow={shadows}
       shadow-mapSize={[1024, 1024]} shadow-camera-left={-22} shadow-camera-right={22}
       shadow-camera-top={22} shadow-camera-bottom={-22} shadow-camera-far={70} shadow-bias={-0.0015}
     />
-  );
-}
-
-function Clouds() {
-  const ref = useRef<THREE.InstancedMesh>(null!);
-  const geo = useMemo(() => new THREE.SphereGeometry(1, 8, 6), []);
-  useEffect(() => {
-    const d = new THREE.Object3D();
-    let i = 0;
-    for (let c = 0; c < 10; c++) {
-      const x = ((c * 37) % 90) - 45, z = c * 18 - 20, y = -8 + ((c * 13) % 9);
-      for (let k = 0; k < 3; k++) {
-        d.position.set(x + (x > 0 ? 18 : -18) + k * 2.6, y + (k === 1 ? 0.8 : 0), z);
-        d.scale.set(2.6 + (k === 1 ? 0.9 : 0), 1.7 + (k === 1 ? 0.6 : 0), 2.2);
-        d.updateMatrix();
-        ref.current.setMatrixAt(i++, d.matrix);
-      }
-    }
-    ref.current.instanceMatrix.needsUpdate = true;
-  }, []);
-  return (
-    <instancedMesh ref={ref} args={[geo, undefined, 30]} frustumCulled={false}>
-      <meshBasicMaterial color="#ffffff" transparent opacity={0.85} />
-    </instancedMesh>
   );
 }
 
@@ -132,7 +108,7 @@ export function Scene({ spectator = false }: { spectator?: boolean }) {
   const sky = level?.sky ?? ['#aee6ff', '#ffe6f5'];
 
   return (
-    <div className="absolute inset-0" style={{ background: `linear-gradient(180deg, ${sky[0]} 0%, ${sky[1]} 70%)` }}>
+    <div className="absolute inset-0" style={{ background: `radial-gradient(ellipse 70% 45% at 50% 68%, #ffffffcc 0%, transparent 70%), linear-gradient(180deg, ${sky[0]} 0%, #8fd3ff 38%, ${sky[1]} 74%)` }}>
       <Canvas
         key={quality}
         dpr={dpr}
@@ -141,12 +117,13 @@ export function Scene({ spectator = false }: { spectator?: boolean }) {
         gl={{ antialias: quality !== 'low', alpha: true, powerPreference: 'high-performance', stencil: false }}
         camera={{ fov: 62, near: 0.3, far: 220, position: [0, 8, -12] }}
       >
-        <fog attach="fog" args={[sky[1], 55, 170]} />
-        <hemisphereLight args={['#ffffff', '#b9a8e8', 1.25]} />
+        <fog attach="fog" args={[sky[1], 70, 210]} />
+        <hemisphereLight args={['#ffffff', '#ffb3de', quality === 'low' ? 1.4 : 1.55]} />
+        {/* 뒤에서 비추는 푸른 보조광: 캐릭터와 발판 가장자리가 또렷해진다 */}
+        <directionalLight position={[-8, 6, 14]} intensity={quality === 'low' ? 0.5 : 1.1} color="#9fd0ff" />
         <Sun shadows={quality === 'high'} />
         <ContextWatch />
         <Driver spectator={spectator} />
-        <Clouds />
         {level && <LevelView key={levelKey} level={level} />}
         <Characters nameRange={spectator ? 60 : 22} />
       </Canvas>

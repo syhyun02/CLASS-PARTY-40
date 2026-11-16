@@ -32,46 +32,46 @@ export function buildRace(seed: number): LevelDef {
     checkpoints.push({ zone: { p: [0, top + 3, z + 1], h: [W + 4, 6, 1.5] }, spawn: [0, top, z + 1] });
 
   // 1) 출발대
-  floor(-8, 10, 0, '#ffe3f1');
+  floor(-8, 10, 0, '#ff8fc7');
   checkpoints.push({ zone: { p: [0, 0, 0], h: [0, 0, 0] }, spawn: [0, 0, 6] });
 
   // 2) 회전 빗자루: 낮은 봉은 점프로 넘는다
-  floor(10, 40, 0, '#cdeeff');
+  floor(10, 40, 0, '#5cc8ff');
   for (let i = 0; i < 3; i++) {
     sweepers.push({
       c: [(i - 1) * 3.2 * flip(), 0.45, 15.5 + i * 9.5],
-      len: 6.4, r: 0.3, speed: (1.5 + i * 0.3) * flip(), phase: r() * 6.28, color: '#ff8fab',
+      len: 6.4, r: 0.3, speed: (1.5 + i * 0.3) * flip(), phase: r() * 6.28, color: '#ff4f8b',
     });
   }
   cp(40, 0);
 
   // 3) 움직이는 벽: 좌우로 미는 벽 사이 틈으로 빠져나간다
-  floor(40, 66, 0, '#e4dcff');
+  floor(40, 66, 0, '#b693ff');
   for (let i = 0; i < 3; i++) {
     const dir = flip();
     movers.push({
       kind: 'wall', p: [0, 1.1, 46.5 + i * 7], h: [4.6, 1.1, 0.6],
-      travel: [3.4 * dir, 0, 0], period: 4.2 - i * 0.5, phase: r(), color: '#b197fc',
+      travel: [3.4 * dir, 0, 0], period: 4.2 - i * 0.5, phase: r(), color: '#7048e8',
     });
   }
   cp(66, 0);
 
   // 4) 점프 발판: 밟으면 높이 튀어 올라 윗단으로 넘어간다
-  floor(66, 73, 0, '#fff3bf');
+  floor(66, 73, 0, '#ffd04d');
   for (let i = 0; i < 4; i++) pads.push({ p: [-6 + i * 4, 0.08, 71.2], h: [1.5, 0.08, 1.3], vy: 15.5 });
   const T = 1.5; // 윗단 높이
-  floor(75, 84, T, '#d3f9d8');
-  statics.push({ p: [0, 0, 75.25], h: [W, 0.5, 0.25], color: '#b2f2bb' }); // 윗단 앞면(밑으로 못 지나가게)
+  floor(75, 84, T, '#5fe0a8');
+  statics.push({ p: [0, 0, 75.25], h: [W, 0.5, 0.25], color: '#5fe0a8' }); // 윗단 앞면(밑으로 못 지나가게)
   cp(78, T);
 
   // 5) 흔들다리: 좌우로 움직이는 좁은 다리 두 개
   for (let i = 0; i < 2; i++) {
     movers.push({
       kind: 'platform', p: [i === 0 ? -3.6 : 3.6, T - 0.25, 91.5], h: [2.1, 0.25, 7.5],
-      travel: [1.6 * (i === 0 ? 1 : -1), 0, 0], period: 3.6 + i * 0.6, phase: r(), color: '#ffc078',
+      travel: [1.6 * (i === 0 ? 1 : -1), 0, 0], period: 3.6 + i * 0.6, phase: r(), color: '#ff9f43',
     });
   }
-  floor(99, 105, T, '#d3f9d8');
+  floor(99, 105, T, '#5fe0a8');
   cp(100, T);
 
   // 6) 징검다리: 떨어지면 체크포인트로 돌아간다
@@ -82,7 +82,7 @@ export function buildRace(seed: number): LevelDef {
       if (row % 2 === 1 && col === 1) continue;
       statics.push({
         p: [col * 4.4 + shift, T - 0.3, z], h: [1.45, 0.3, 1.25],
-        color: ['#ffa8a8', '#ffd43b', '#74c0fc'][(row + col + 3) % 3],
+        color: ['#ff6b8b', '#ffd43b', '#4dabf7'][(row + col + 3) % 3],
       });
     }
     z += 4.5;
@@ -92,11 +92,11 @@ export function buildRace(seed: number): LevelDef {
     kind: 'platform', p: [-7.1, T - 0.3, 117], h: [1.2, 0.3, 1.2],
     travel: [0, 0, 8], period: 5, phase: r(), color: '#63e6be',
   });
-  floor(z - 1.25, z + 20, T, '#cdeeff');
+  floor(z - 1.25, z + 20, T, '#ff8fc7');
   cp(z - 0.5, T);
 
   // 7) 결승 직전: 높낮이가 다른 봉 두 개
-  sweepers.push({ c: [0, T + 0.45, z + 6], len: 7.2, r: 0.3, speed: 2.3 * flip(), phase: r() * 6.28, color: '#ff8fab' });
+  sweepers.push({ c: [0, T + 0.45, z + 6], len: 7.2, r: 0.3, speed: 2.3 * flip(), phase: r() * 6.28, color: '#ff4f8b' });
   sweepers.push({ c: [0, T + 1.8, z + 6], len: 7.2, r: 0.3, speed: -1.3 * flip(), phase: r() * 6.28, color: '#ffa94d' });
   const fz = z + 14;
   const finish: Box = { p: [0, T + 3, fz + 3], h: [W, 6, 3] };
@@ -110,6 +110,6 @@ export function buildRace(seed: number): LevelDef {
     statics, movers, sweepers, pads, checkpoints,
     spawnCols: 8, spawnSpacing: 1.5, killY: -9,
     finish, track: { z0: 6, z1: fz },
-    sky: ['#9fd8ff', '#fff0c9'],
+    sky: ['#3fb0ff', '#ffe3f4'],
   };
 }
