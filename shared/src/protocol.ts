@@ -116,3 +116,12 @@ export function decodeSnapshot(buf: ArrayBuffer): { tick: number; players: SnapP
   }
   return { tick, players };
 }
+
+/** 미니게임별 실시간 상태(서버 → 전원). 지금은 보물 게임만 쓴다. */
+export interface CollectState {
+  /** 이미 누가 가져간 보물 번호 */
+  taken: number[];
+  /** [플레이어 번호, 점수] */
+  scores: [number, number][];
+}
+export interface GameStateMsg { key: string; state: CollectState | null }

@@ -1,5 +1,6 @@
 import { GAMES, type GameMode } from '@shared';
 import { raceGame } from './race';
+import { collectGame } from './collect';
 import { survivalGame } from './survival';
 import type { MinigameServer } from './types';
 
@@ -9,6 +10,8 @@ const REGISTRY: Record<string, MinigameServer> = {
   spinner: survivalGame('spinner'),
   tiles: survivalGame('tiles'),
   last: survivalGame('last'),
+  bomb: survivalGame('bomb'),
+  treasure: collectGame('treasure'),
 };
 
 export const getMinigame = (id: string) => REGISTRY[id];

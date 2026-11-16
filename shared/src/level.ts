@@ -41,6 +41,21 @@ export interface Tile extends Box {
 }
 export const NEVER = 1e9;
 
+/** 정해진 시각에 나타나 fuse초 뒤 터지는 폭탄. 반경 안에서 가려지지 않은 플레이어를 날려 보낸다. */
+export interface Bomb {
+  p: Vec3; // 바닥 위 위치
+  at: number; // 나타나는 시각(초)
+  fuse: number;
+  radius: number;
+}
+
+/** 정해진 시각에 나타나는 보물. 먼저 닿은 사람이 가져간다(서버 판정). */
+export interface Item {
+  p: Vec3;
+  at: number;
+  value: number;
+}
+
 export interface Pad extends Box {
   vy: number; // 밟으면 받는 위쪽 속도
 }
@@ -58,6 +73,9 @@ export interface LevelDef {
   sweepers: Sweeper[];
   pads: Pad[];
   tiles?: Tile[];
+  /** 터지는 시각 순서로 정렬되어 있어야 한다 */
+  bombs?: Bomb[];
+  items?: Item[];
   /** true면 떨어져도 부활하지 않는다(생존 게임) */
   noRespawn?: boolean;
   /** 지정하면 격자 대신 원형으로 둘러서서 출발한다 */

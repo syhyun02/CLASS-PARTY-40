@@ -23,6 +23,10 @@ export interface GameCtx {
   /** 남은 시간을 줄인다(틱) */
   shortenTo(ticksLeft: number): void;
   ticksLeft(): number;
+  /** 맵 시간(초). 맵 데이터의 일정(at, offAt 등)과 같은 기준이다. */
+  levelTime(): number;
+  /** 게임별 실시간 상태를 전원에게 보낸다(자주 불러도 서버가 묶어서 보낸다) */
+  publish(state: unknown): void;
   /** 플레이어 정보가 바뀌었음을 알린다 → 방 상태 재전송 */
   touch(): void;
 }

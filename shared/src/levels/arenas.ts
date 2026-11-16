@@ -1,5 +1,5 @@
 import { COUNTDOWN_SEC } from '../constants';
-import { NEVER, type LevelDef, type Sweeper, type Tile } from '../level';
+import { NEVER, type Bomb, type Item, type LevelDef, type Sweeper, type Tile } from '../level';
 import { rng } from './race';
 
 const T0 = COUNTDOWN_SEC; // 경기 시작 시각(맵 시간 기준)
@@ -111,5 +111,90 @@ export function buildLast(seed: number): LevelDef {
     bar(1.85, -0.8 * dir, T0 + 30, '#ffa94d', 0.03, 2.6),
   ];
   l.spawnRing = 7.2;
+  return l;
+}
+
+/**
+ * 폭탄 피하기 "펑펑 광장"
+ * 폭탄이 나타나 빨간 원을 그린 뒤 터진다. 원 밖으로 나가거나 벽 뒤에 숨으면 안전하다.
+ * 뒤로 갈수록 폭탄이 잦아지고, 중간에 광장 바깥 고리가 무너진다.
+ */
+export function buildBomb(seed: number): LevelDef {
+  const r = rng(seed);
+  const l = base('bomb', '펑펑 광장');
+  const N = 7, pitch = 3.2, half = 1.56, c = (N - 1) / 2;
+  const shrink = T0 + 40;
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+    const ring = Math.max(Math.abs(i - c), Math.abs(j - c));
+    const off = ring === 3 ? shrink : NEVER;
+    l.tiles!.push({
+      shape: 'box', p: [(i - c) * pitch, -0.4, (j - c) * pitch], h: [half, 0.4, half],
+      color: (i + j) % 2 ? '#b693ff' : '#5cc8ff', warnAt: off - 3, offAt: off,
+    });
+  }
+  // 엄폐용 벽 4개(바람개비 모양으로 배치)
+  const wall = (x: number, z: number, alongX: boolean) =>
+    l.statics.push({ p: [x, 0.95, z], h: alongX ? [1.7, 0.95, 0.35] : [0.35, 0.95, 1.7], color: '#ffd04d' });
+  wall(-4.8, -3.2, true); wall(4.8, 3.2, true); wall(-3.2, 4.8, false); wall(3.2, -4.8, false);
+  const bombs: Bomb[] = [];
+  let t = T0 + 3, k = 0;
+  while (t < T0 + 74) {
+    const prog = Math.min(1, (t - T0) / 60);
+    const lim = (t + 2.5 > shrink ? 7.4 : 10.4); // 무너진 고리 위에는 놓지 않는다
+    const big = k % 5 === 4;
+    const count = prog > 0.55 && k % 3 === 0 ? 2 : 1; // 후반에는 두 개씩
+    for (let i = 0; i < count; i++) {
+      bombs.push({
+        p: [(r() * 2 - 1) * lim, 0, (r() * 2 - 1) * lim], at: t + i * 0.25,
+        fuse: big ? 3 : 2.3 - prog * 0.7, radius: big ? 6.2 : 4.4,
+      });
+    }
+    t += 2.3 - prog * 1.5;
+    k++;
+  }
+  l.bombs = bombs.sort((a, b) => a.at + a.fuse - (b.at + b.fuse));
+  l.checkpoints[0].spawn = [0, 0, 3.4];
+  return l;
+}
+
+/**
+ * 보물 쟁탈전 "반짝 보물섬"
+ * 보석을 먼저 집는 사람이 임자. 회전봉 안쪽과 건너편 작은 섬에는 3점짜리 큰 보석이 나온다.
+ * 떨어지면 출발 지점에서 다시 시작하고 점수가 깎인다.
+ */
+export function buildTreasure(seed: number): LevelDef {
+  const r = rng(seed);
+  const dir = r() < 0.5 ? 1 : -1;
+  const l = base('treasure', '반짝 보물섬');
+  l.noRespawn = false;
+  l.killY = -7;
+  const H = 12; // 본섬 절반 크기
+  l.statics.push({ p: [0, -0.5, 0], h: [H, 0.5, H], color: '#5fe0a8' });
+  const isles: [number, number][] = [[H + 4.2, 0], [-H - 4.2, 0], [0, H + 4.2], [0, -H - 4.2]];
+  for (const [x, z] of isles) l.statics.push({ p: [x, -0.5, z], h: [2, 0.5, 2], color: '#ffd04d' });
+  pillar(l);
+  l.sweepers = [
+    { c: [0, 0.45, 0], len: 5.6, r: 0.3, speed: 1.7 * dir, phase: r() * 6.28, color: '#ff4f8b', startAt: T0 + 1.5 },
+    { c: [0, 1.85, 0], len: 5.6, r: 0.3, speed: -1.1 * dir, phase: r() * 6.28, color: '#ffa94d', startAt: T0 + 1.5 },
+  ];
+  const items: Item[] = [];
+  for (let t = T0 + 0.5; t < T0 + 58; t += 0.4) {
+    const roll = r();
+    if (roll < 0.15) {
+      const a = r() * 6.28, d = 1.8 + r() * 3.4; // 회전봉 안쪽
+      items.push({ p: [Math.sin(a) * d, 0.7, Math.cos(a) * d], at: t, value: 3 });
+    } else if (roll < 0.3) {
+      const [x, z] = isles[Math.floor(r() * 4)]; // 건너편 섬
+      items.push({ p: [x + (r() * 2 - 1) * 1.2, 0.7, z + (r() * 2 - 1) * 1.2], at: t, value: 3 });
+    } else {
+      let x = 0, z = 0;
+      do { x = (r() * 2 - 1) * (H - 1); z = (r() * 2 - 1) * (H - 1); } while (Math.hypot(x, z) < 6.5);
+      items.push({ p: [x, 0.7, z], at: t, value: 1 });
+    }
+  }
+  l.items = items;
+  l.checkpoints[0].spawn = [0, 0, -7.2];
+  l.spawnCols = 10;
+  l.spawnSpacing = 1.4;
   return l;
 }

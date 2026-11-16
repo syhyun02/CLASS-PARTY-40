@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { RoomState } from '@shared';
+import type { CollectState, RoomState } from '@shared';
 
 export type Screen = 'home' | 'hostSetup' | 'join' | 'play' | 'host';
 export type Quality = 'low' | 'medium' | 'high';
@@ -9,6 +9,8 @@ const isTouch = typeof window !== 'undefined' && ('ontouchstart' in window || na
 interface Store {
   screen: Screen;
   room: RoomState | null;
+  /** 미니게임별 실시간 상태(보물 점수 등) */
+  game: CollectState | null;
   myId: number | null;
   myName: string;
   online: boolean;
@@ -25,6 +27,7 @@ const savedQ = (() => { try { return localStorage.getItem('cp40:quality') as Qua
 export const useStore = create<Store>((set) => ({
   screen: 'home',
   room: null,
+  game: null,
   myId: null,
   myName: '',
   online: false,

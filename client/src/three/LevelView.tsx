@@ -281,6 +281,132 @@ function Tiles({ level, low }: { level: LevelDef; low: boolean }) {
   );
 }
 
+/** 폭탄: 나타나면 터질 범위를 빨간 원으로 보여 주고, 터지는 순간 불꽃이 퍼진다. */
+function Bombs({ level }: { level: LevelDef }) {
+  const bombs = level.bombs ?? [];
+  const MAX = 10;
+  const body = useRef<THREE.InstancedMesh>(null!);
+  const zone = useRef<THREE.InstancedMesh>(null!);
+  const edge = useRef<THREE.InstancedMesh>(null!);
+  const blast = useRef<THREE.InstancedMesh>(null!);
+  const sphere = useMemo(() => new THREE.SphereGeometry(1, 14, 10), []);
+  const disc = useMemo(() => new THREE.CircleGeometry(1, 40).rotateX(-Math.PI / 2), []);
+  const ring = useMemo(() => new THREE.RingGeometry(0.93, 1, 48).rotateX(-Math.PI / 2), []);
+  const start = useRef(0);
+
+  useFrame(() => {
+    if (!bombs.length) return; // 폭탄이 없는 맵에서는 메시도 없다
+    const t = net.levelTime();
+    let n = 0, nb = 0;
+    // 지나간 폭탄은 건너뛴다(터지는 시각 순으로 정렬되어 있다)
+    while (start.current < bombs.length && t > bombs[start.current].at + bombs[start.current].fuse + 0.6) start.current++;
+    if (start.current > 0 && t < bombs[start.current - 1].at) start.current = 0;
+    for (let i = start.current; i < bombs.length && n < MAX; i++) {
+      const b = bombs[i];
+      if (t < b.at) continue;
+      const left = b.at + b.fuse - t;
+      if (left > 0) {
+        const k = 1 - left / b.fuse; // 0 → 1
+        const pulse = 1 + Math.sin(t * (6 + k * 26)) * 0.09;
+        const drop = Math.max(0, 1 - (t - b.at) / 0.25) * 5; // 하늘에서 툭 떨어진다
+        dummy.rotation.set(0, 0, 0);
+        dummy.position.set(b.p[0], b.p[1] + 0.55 + drop, b.p[2]);
+        dummy.scale.setScalar((b.radius > 5 ? 0.8 : 0.55) * pulse);
+        dummy.updateMatrix();
+        body.current.setMatrixAt(n, dummy.matrix);
+        body.current.setColorAt(n, col.set(Math.sin(t * (6 + k * 26)) > 0.3 ? '#ff3b3b' : '#2b2145'));
+        dummy.position.set(b.p[0], b.p[1] + 0.04, b.p[2]);
+        dummy.scale.set(b.radius * k, 1, b.radius * k); // 안쪽 원이 차오르면 터진다
+        dummy.updateMatrix();
+        zone.current.setMatrixAt(n, dummy.matrix);
+        dummy.position.y = b.p[1] + 0.05;
+        dummy.scale.set(b.radius, 1, b.radius);
+        dummy.updateMatrix();
+        edge.current.setMatrixAt(n, dummy.matrix);
+        n++;
+      } else if (left > -0.45 && nb < MAX) {
+        const k = -left / 0.45;
+        dummy.rotation.set(0, 0, 0);
+        dummy.position.set(b.p[0], b.p[1] + 0.3, b.p[2]);
+        const sc = b.radius * (0.35 + 0.65 * Math.sqrt(k));
+        dummy.scale.set(sc, sc * 0.55 * (1 - k * 0.5), sc);
+        dummy.updateMatrix();
+        blast.current.setMatrixAt(nb, dummy.matrix);
+        blast.current.setColorAt(nb, col.set(k < 0.3 ? '#fff3b0' : k < 0.65 ? '#ffb347' : '#ff6b6b'));
+        nb++;
+      }
+    }
+    for (const m of [body.current, zone.current, edge.current]) { m.count = n; m.instanceMatrix.needsUpdate = true; }
+    if (body.current.instanceColor) body.current.instanceColor.needsUpdate = true;
+    blast.current.count = nb; blast.current.instanceMatrix.needsUpdate = true;
+    if (blast.current.instanceColor) blast.current.instanceColor.needsUpdate = true;
+  });
+
+  if (!bombs.length) return null;
+  return (
+    <group>
+      <instancedMesh ref={body} args={[sphere, undefined, MAX]} frustumCulled={false}><meshLambertMaterial /></instancedMesh>
+      <instancedMesh ref={zone} args={[disc, undefined, MAX]} frustumCulled={false} renderOrder={2}>
+        <meshBasicMaterial color="#ff3b3b" transparent opacity={0.3} depthWrite={false} polygonOffset polygonOffsetFactor={-3} />
+      </instancedMesh>
+      <instancedMesh ref={edge} args={[ring, undefined, MAX]} frustumCulled={false} renderOrder={3}>
+        <meshBasicMaterial color="#ff3b3b" transparent opacity={0.9} depthWrite={false} polygonOffset polygonOffsetFactor={-4} />
+      </instancedMesh>
+      <instancedMesh ref={blast} args={[sphere, undefined, MAX]} frustumCulled={false} renderOrder={4}>
+        <meshBasicMaterial transparent opacity={0.7} depthWrite={false} />
+      </instancedMesh>
+    </group>
+  );
+}
+
+const GEM1 = new THREE.Color('#00a8ff');
+const GEM3 = new THREE.Color('#ffb700');
+
+/** 보물: 일정대로 나타나 빙글빙글 돌고, 누가 가져가면(서버 통보) 사라진다. */
+function Items({ level }: { level: LevelDef }) {
+  const items = level.items ?? [];
+  const mesh = useRef<THREE.InstancedMesh>(null!);
+  const geo = useMemo(() => new THREE.OctahedronGeometry(1, 0), []);
+  const cache = useRef<{ src: number[] | null; set: Set<number> }>({ src: null, set: new Set() });
+  const first = useRef(0);
+
+  useFrame(() => {
+    if (!items.length) return;
+    const t = net.levelTime();
+    const taken = useStore.getState().game?.taken ?? null;
+    if (taken !== cache.current.src) cache.current = { src: taken, set: new Set(taken ?? []) };
+    const set = cache.current.set;
+    // 앞쪽의 이미 가져간 보물은 다시 보지 않는다
+    while (first.current < items.length && set.has(first.current)) first.current++;
+    let n = 0;
+    for (let i = first.current; i < items.length; i++) {
+      const it = items[i];
+      if (it.at > t) break;
+      if (set.has(i)) continue;
+      const age = t - it.at;
+      const pop = Math.min(1, age / 0.3);
+      const sc = (it.value > 1 ? 0.5 : 0.34) * (pop + Math.sin(pop * Math.PI) * 0.35);
+      dummy.position.set(it.p[0], it.p[1] + Math.sin(t * 3 + i) * 0.12, it.p[2]);
+      dummy.rotation.set(0, t * 2.5 + i, 0);
+      dummy.scale.set(sc, sc * 1.35, sc);
+      dummy.updateMatrix();
+      mesh.current.setMatrixAt(n, dummy.matrix);
+      mesh.current.setColorAt(n, it.value > 1 ? GEM3 : GEM1);
+      n++;
+    }
+    mesh.current.count = n;
+    mesh.current.instanceMatrix.needsUpdate = true;
+    if (mesh.current.instanceColor) mesh.current.instanceColor.needsUpdate = true;
+  });
+
+  if (!items.length) return null;
+  return (
+    <instancedMesh ref={mesh} args={[geo, undefined, items.length]} frustumCulled={false}>
+      <meshLambertMaterial flatShading />
+    </instancedMesh>
+  );
+}
+
 /** 맵 정의(LevelDef)를 그대로 메시로 옮긴다. 고정 바닥은 InstancedMesh 하나로 그린다. */
 export function LevelView({ level }: { level: LevelDef }) {
   const quality = useStore((s) => s.quality);
@@ -353,6 +479,8 @@ export function LevelView({ level }: { level: LevelDef }) {
     <group>
       <instancedMesh ref={statics} args={[box, blockMat, Math.max(1, level.statics.length)]} count={level.statics.length} receiveShadow={shadow} />
       <Tiles level={level} low={low} />
+      <Bombs level={level} />
+      <Items level={level} />
       <instancedMesh ref={strips} args={[box, undefined, Math.max(1, cps.length)]} count={cps.length}>
         <meshBasicMaterial color="#ffffff" transparent opacity={0.85} />
       </instancedMesh>

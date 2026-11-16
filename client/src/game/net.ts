@@ -3,7 +3,7 @@ import { io, type Socket } from 'socket.io-client';
 import {
   DT, FLAG_HIDDEN, NO_INPUT, SimWorld, TICK_RATE, buildLevel, decodeSnapshot, newPlayerState, unpackState,
   type CreateRes, type HostCmd, type JoinRes, type LevelDef, type PlayerInput, type PlayerState, type RoomConfig,
-  type RoomState, type SelfMsg, type SnapPlayer,
+  type GameStateMsg, type RoomState, type SelfMsg, type SnapPlayer,
 } from '@shared';
 import { actionHeld, input, jumpHeld, resetCamera, worldMove } from './input';
 import { useStore } from './store';
@@ -65,6 +65,7 @@ class GameNet {
     s.on('room', (r: RoomState) => this.onRoom(r));
     s.on('s', (buf: ArrayBuffer) => this.onSnapshot(buf));
     s.on('me', (m: SelfMsg) => this.onSelf(m));
+    s.on('g', (m: GameStateMsg) => { if (m.key === this.levelKey) useStore.setState({ game: m.state }); });
     s.on('kicked', () => this.exit('선생님이 내보냈어요.'));
     s.on('replaced', () => this.exit('다른 기기에서 같은 이름으로 접속했어요.'));
     setInterval(() => {
@@ -153,6 +154,7 @@ class GameNet {
     this.sim = new SimWorld(RAPIER, this.level);
     this.levelKey = r.levelKey;
     this.levelTick = r.levelTick;
+    useStore.setState({ game: null });
     this.snaps = [];
     this.pending = [];
     this.history.clear();

@@ -31,6 +31,9 @@ interface Bot { x: number; y: number; grounded: number; tick: number; socket: So
 const host = await connect();
 let room: RoomState | null = null;
 host.on('room', (r: RoomState) => { room = r; });
+let taken = new Set<number>();
+let gameMsgs = 0;
+host.on('g', (m: { state: { taken: number[]; scores: [number, number][] } | null }) => { gameMsgs++; taken = new Set(m.state?.taken ?? []); });
 const created = await new Promise<CreateRes>((res) => host.emit('host:create', { config: { mode: 'play', rounds: ROUNDS, games: [GAME] } }, res));
 if (!created.ok) throw new Error(created.error);
 console.log(`방 ${created.code} 생성, 봇 ${BOTS}명 접속 중...`);
@@ -69,6 +72,30 @@ const timer = setInterval(() => {
         if (tl.shape === 'disc') { const r = Math.hypot(b.x, b.z), lim = tl.h[0] - 1.5; if (r > lim || best === 1e9) { const k = r > 0.1 ? Math.min(1, lim / r) : 1; const d = Math.max(0, r - lim); if (d < best || best === 1e9) { best = d; tx = b.x * k; tz = b.z * k; } } else { best = 0; tx = b.x; tz = b.z; } continue; }
         const d = Math.hypot(tl.p[0] - b.x, tl.p[2] - b.z) + (Math.hypot(tl.p[0], tl.p[2]) < 1.5 ? 3 : 0) + ((i * 7 + Math.round(tl.p[0] * 3 + tl.p[2])) % 5) * 0.2;
         if (d < best) { best = d; tx = tl.p[0]; tz = tl.p[2]; }
+      }
+      // 폭탄 범위 안이면 가장 가까운 바깥으로(광장 밖으로는 나가지 않게)
+      for (const bm of lv.bombs ?? []) {
+        if (lt < bm.at || lt > bm.at + bm.fuse) continue;
+        const ox = b.x - bm.p[0], oz = b.z - bm.p[2], d = Math.hypot(ox, oz);
+        if (d > bm.radius + 0.8) continue;
+        const lim = lt > 40 ? 6.5 : 9.5;
+        let a = d > 0.1 ? Math.atan2(ox, oz) : i;
+        for (let k = 0; k < 8; k++) {
+          const cx = bm.p[0] + Math.sin(a) * (bm.radius + 1.6), cz = bm.p[2] + Math.cos(a) * (bm.radius + 1.6);
+          if (Math.abs(cx) < lim && Math.abs(cz) < lim) { tx = cx; tz = cz; break; }
+          a += (k % 2 ? -1 : 1) * (k + 1) * 0.5;
+        }
+      }
+      // 보물: 본섬에 있는 가장 가까운 보석으로
+      if (lv.items) {
+        let bd = 1e9;
+        lv.items.forEach((it, k) => {
+          if (it.at > lt || taken.has(k) || Math.abs(it.p[0]) > 11 || Math.abs(it.p[2]) > 11 || Math.hypot(it.p[0], it.p[2]) < 6.8) return;
+          const d = Math.hypot(it.p[0] - b.x, it.p[2] - b.z);
+          if (d < bd) { bd = d; tx = it.p[0]; tz = it.p[2]; }
+        });
+        // 가는 길이 회전봉 구역을 지나면 돌아간다
+        if (Math.hypot(b.x, b.z) < 7.2) { const a = Math.atan2(b.x, b.z); tx = Math.sin(a) * 9; tz = Math.cos(a) * 9; }
       }
       // 가운데 기둥에서는 떨어져 선다
       if (Math.hypot(tx, tz) < 1.6) { const a = i * 2.4; tx += Math.sin(a) * 1.0; tz += Math.cos(a) * 1.0; }
@@ -111,6 +138,7 @@ const pct = (a: number[], p: number) => { const s = [...a].sort((x, y) => x - y)
 const all = (f: (b: Bot) => number[]) => bots.flatMap(f);
 const gaps = all((b) => b.gaps), rtts = all((b) => b.rtts), lag = all((b) => b.ackLag);
 const finished = room!.players.filter((p) => p.place !== null).length;
+console.log('게임 상태 메시지 수:', gameMsgs);
 if (room!.lastResult) { const ts = room!.lastResult.map((r) => parseFloat(r.detail)).filter((v) => !isNaN(v)).sort((a, c) => a - c); console.log('탈락 시각 분포(초):', [0, 0.25, 0.5, 0.75, 1].map((q) => ts[Math.min(ts.length - 1, Math.floor(q * ts.length))]).join(' / ')); }
 if (room!.lastResult) console.log('결과 상위 5:', room!.lastResult.slice(0, 5).map((r) => `${r.rank}위 ${r.name} +${r.points} (${r.detail})`).join(' | '), '· 하위:', room!.lastResult.slice(-2).map((r) => `${r.rank}위 +${r.points} (${r.detail})`).join(' | '));
 

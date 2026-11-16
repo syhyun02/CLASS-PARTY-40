@@ -1,7 +1,7 @@
 import type { LevelDef } from './level';
 import { buildLobby } from './levels/lobby';
 import { buildRace } from './levels/race';
-import { buildLast, buildSpinner, buildTiles } from './levels/arenas';
+import { buildBomb, buildLast, buildSpinner, buildTiles, buildTreasure } from './levels/arenas';
 
 export type GameMode = 'play' | 'chem';
 export type Genre = 'race' | 'survival' | 'battle' | 'collect' | 'quiz';
@@ -40,8 +40,14 @@ export const GAMES: GameMeta[] = [
   todo('maze', '움직이는 미로', '🧩', 'race', '바뀌는 미로에서 출구를 찾아요'),
   todo('tail', '꼬리 지키기', '🦊', 'battle', '꼬리를 빼앗고 끝까지 지켜요'),
   todo('answer', '정답 발판 배틀', '✅', 'quiz', '정답 발판 위로 달려가요'),
-  todo('bomb', '폭탄 피하기', '💣', 'survival', '폭발을 피해 살아남아요'),
-  todo('treasure', '보물 쟁탈전', '💎', 'collect', '보물을 가장 많이 모아요'),
+  {
+    id: 'bomb', name: '펑펑 광장', emoji: '💣', genre: 'survival', modes: ['play', 'chem'],
+    howTo: '빨간 원 밖으로 피하거나 벽 뒤에 숨어요!', timeLimit: 76, implemented: true, buildLevel: buildBomb,
+  },
+  {
+    id: 'treasure', name: '반짝 보물섬', emoji: '💎', genre: 'collect', modes: ['play', 'chem'],
+    howTo: '보석을 먼저 집어요. 큰 보석은 3점!', timeLimit: 60, implemented: true, buildLevel: buildTreasure,
+  },
   {
     id: 'last', name: '좁아지는 섬', emoji: '👑', genre: 'survival', modes: ['play', 'chem'],
     howTo: '섬이 무너져요. 마지막 한 명이 될 때까지 버텨요!', timeLimit: 92, implemented: true, buildLevel: buildLast,

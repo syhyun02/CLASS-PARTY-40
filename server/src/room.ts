@@ -1,7 +1,7 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import type { Server, Socket } from 'socket.io';
 import {
-  COUNTDOWN_SEC, FLAG_DONE, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_MOVING, FLAG_STUN, MAX_PLAYERS, NO_INPUT, PLAYER_COLORS, PLAYER_RADIUS,
+  COUNTDOWN_SEC, DT, FLAG_DONE, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_MOVING, FLAG_STUN, MAX_PLAYERS, NO_INPUT, PLAYER_COLORS, PLAYER_RADIUS,
   SNAPSHOT_EVERY, SimWorld, TICK_RATE, buildLevel, encodeSnapshot, getGame, newPlayerState, packState,
   type HostCmd, type InputMsg, type JoinReq, type JoinRes, type LevelDef, type Phase, type PlayerInput,
   type PlayerState, type RoomConfig, type RoomState, type RoundRow, type SelfMsg, type SnapPlayer,
@@ -60,6 +60,8 @@ export class Room {
   private history: RoomState['history'] = [];
   private drawn: string[] = [];
   private dirty = true;
+  private gameState: unknown = null;
+  private gameDirty = false;
   lastActive = Date.now();
 
   constructor(private io: Server, private R: typeof RAPIER_NS, readonly code: string, public config: RoomConfig) {
@@ -120,6 +122,7 @@ export class Room {
     this.dirty = true;
     this.lastActive = Date.now();
     socket.emit('room', this.snapshotState());
+    if (this.gameState) socket.emit('g', { key: this.levelKey, state: this.gameState });
     return { ok: true, id: p.id, token: p.token, name: p.name, tickRate: TICK_RATE };
   }
 
@@ -212,6 +215,8 @@ export class Room {
     this.levelSeed = seed;
     this.levelKey = `${levelId}:${++this.levelSerial}`;
     this.levelTick = this.tick;
+    this.gameState = null;
+    this.gameDirty = false;
     for (const p of this.players.values()) {
       p.state = newPlayerState(this.level, p.id);
       p.queue.length = 0;
@@ -249,6 +254,8 @@ export class Room {
       ticksLeft: () => this.phaseEndTick - this.tick,
       shortenTo: (t) => { this.phaseEndTick = this.tick + t; this.dirty = true; },
       touch: () => { this.dirty = true; },
+      levelTime: () => (this.tick - this.levelTick) * DT,
+      publish: (st) => { this.gameState = st; this.gameDirty = true; },
     };
     this.runtime = getMinigame(this.gameId!).create(ctx);
   }
@@ -338,6 +345,11 @@ export class Room {
       }
     }
     this.flush();
+    // 게임별 상태는 바뀌었을 때만, 최대 초당 10번 보낸다
+    if (this.gameDirty && this.tick % 3 === 0) {
+      this.gameDirty = false;
+      this.io.to(this.channel).emit('g', { key: this.levelKey, state: this.gameState });
+    }
     if (this.tick % SNAPSHOT_EVERY === 0) this.broadcastSnapshot();
   }
 

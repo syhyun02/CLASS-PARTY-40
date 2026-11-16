@@ -20,6 +20,7 @@ export interface PlayerState {
   mover: number; // 올라탄 발판 인덱스(-1 없음)
   cp: number; // 마지막 체크포인트
   falls: number;
+  bomb: number; // 다음에 처리할 폭탄 번호(같은 폭탄에 두 번 맞거나 건너뛰지 않게)
 }
 
 export interface PlayerInput {
@@ -32,7 +33,7 @@ export interface PlayerInput {
 export const NO_INPUT: PlayerInput = { mx: 0, mz: 0, jump: false, action: false };
 
 export const STATE_KEYS: (keyof PlayerState)[] = [
-  'x', 'y', 'z', 'vx', 'vy', 'vz', 'yaw', 'grounded', 'stun', 'coyote', 'jumpBuf', 'jumpHeld', 'mover', 'cp', 'falls',
+  'x', 'y', 'z', 'vx', 'vy', 'vz', 'yaw', 'grounded', 'stun', 'coyote', 'jumpBuf', 'jumpHeld', 'mover', 'cp', 'falls', 'bomb',
 ];
 export const packState = (s: PlayerState): number[] => STATE_KEYS.map((k) => s[k]);
 export function unpackState(a: number[], out: PlayerState): PlayerState {
@@ -43,7 +44,7 @@ export function unpackState(a: number[], out: PlayerState): PlayerState {
 export function newPlayerState(level: LevelDef, slot: number, cp = 0): PlayerState {
   const [x, y, z] = spawnPoint(level, cp, slot);
   const yaw = level.spawnRing ? Math.atan2(-x, -z) : 0; // 원형 출발이면 가운데를 바라본다
-  return { x, y, z, vx: 0, vy: 0, vz: 0, yaw, grounded: 1, stun: 0, coyote: 0, jumpBuf: 0, jumpHeld: 0, mover: -1, cp, falls: 0 };
+  return { x, y, z, vx: 0, vy: 0, vz: 0, yaw, grounded: 1, stun: 0, coyote: 0, jumpBuf: 0, jumpHeld: 0, mover: -1, cp, falls: 0, bomb: 0 };
 }
 
 const G_LEVEL = 0x0001;
@@ -66,11 +67,13 @@ export class SimWorld {
   private moverPos: [number, number, number][] = [];
   private tileCols: RAPIER_NS.Collider[] = [];
   private tileOn: boolean[] = [];
+  private ray: RAPIER_NS.Ray;
   private time = 0;
   private tick = -1;
 
   constructor(R: Rapier, readonly level: LevelDef) {
     this.world = new R.World({ x: 0, y: 0, z: 0 });
+    this.ray = new R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 1, z: 0 });
     this.world.timestep = DT;
     for (const b of level.statics) {
       this.world.createCollider(
@@ -230,6 +233,29 @@ export class SimWorld {
           s.stun = STUN_TICKS; s.grounded = 0; s.coyote = 0; s.mover = -1;
           break;
         }
+      }
+    }
+
+    // 폭탄: 터질 시각이 지난 것을 차례로 처리한다. 엄폐물 뒤(폭탄에서 안 보이는 곳)는 안전하다.
+    const bombs = L.bombs;
+    if (bombs) {
+      while (s.bomb < bombs.length && this.time >= bombs[s.bomb].at + bombs[s.bomb].fuse) {
+        const b = bombs[s.bomb++];
+        if (this.time - (b.at + b.fuse) > 0.5) continue; // 한참 지난 폭탄(늦게 합류)은 무시
+        const ox = s.x - b.p[0], oz = s.z - b.p[2], oy = s.y + PLAYER_CENTER_Y - (b.p[1] + 0.6);
+        const d = Math.hypot(ox, oz);
+        if (d > b.radius || Math.abs(oy) > 3.5) continue;
+        if (d > 0.9) {
+          const len = Math.hypot(d, oy);
+          this.ray.origin.x = b.p[0]; this.ray.origin.y = b.p[1] + 0.6; this.ray.origin.z = b.p[2];
+          this.ray.dir.x = ox / len; this.ray.dir.y = oy / len; this.ray.dir.z = oz / len;
+          const hit = this.world.castRay(this.ray, len - 0.45, true, undefined, PLAYER_GROUPS);
+          if (hit) continue; // 벽에 가려졌다
+        }
+        const a = d > 0.05 ? Math.atan2(ox, oz) : slot * 2.4;
+        const power = 13 * (1 - (d / b.radius) * 0.55);
+        s.vx = Math.sin(a) * power; s.vz = Math.cos(a) * power; s.vy = 8.5;
+        s.stun = STUN_TICKS; s.grounded = 0; s.coyote = 0; s.mover = -1;
       }
     }
 

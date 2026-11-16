@@ -112,9 +112,38 @@ export function SurvivalHud({ room, myId }: { room: RoomState; myId: number | nu
   );
 }
 
+/** 수집 게임 상단 정보: 남은 시간, 내 점수, 현재 1~3위 */
+export function CollectHud({ room, myId }: { room: RoomState; myId: number | null }) {
+  const left = useSecondsLeft(4);
+  const game = useStore((s) => s.game);
+  const scores = [...(game?.scores ?? [])].sort((a, b) => b[1] - a[1]);
+  const mine = scores.find((s) => s[0] === myId)?.[1] ?? 0;
+  const myRank = scores.findIndex((s) => s[0] === myId) + 1;
+  const name = (id: number) => room.players.find((p) => p.id === id);
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-2 p-3" style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}>
+      <div className="flex flex-col items-start gap-1">
+        <div className="chip tabular-nums">
+          {myId !== null ? <>💎 <b key={mine} className="inline-block animate-pop text-xl text-bubble">{mine}</b>점{myRank > 0 && ` · ${myRank}위`}</> : '💎 반짝 보물섬'}
+        </div>
+        {scores.slice(0, 3).map(([id, v], i) => (
+          <div key={id} className="chip flex items-center gap-1 !py-0.5 tabular-nums">
+            {['🥇', '🥈', '🥉'][i]} <Blob color={name(id)?.color ?? '#fff'} size={14} /> {name(id)?.name} <b>{v}</b>
+          </div>
+        ))}
+      </div>
+      <div className={`chip tabular-nums text-lg ${left <= 10 ? 'animate-wiggle !bg-bubble !text-white' : ''}`}>⏱ {Math.floor(left / 60)}:{String(Math.floor(left % 60)).padStart(2, '0')}</div>
+      <div className="w-24" />
+    </div>
+  );
+}
+
 /** 게임 장르에 맞는 경기 중 HUD */
 export function GameHud({ room, myId }: { room: RoomState; myId: number | null }) {
-  return getGame(room.gameId ?? '')?.genre === 'race' ? <RaceHud room={room} myId={myId} /> : <SurvivalHud room={room} myId={myId} />;
+  const genre = getGame(room.gameId ?? '')?.genre;
+  if (genre === 'race') return <RaceHud room={room} myId={myId} />;
+  if (genre === 'collect') return <CollectHud room={room} myId={myId} />;
+  return <SurvivalHud room={room} myId={myId} />;
 }
 
 function Row({ r, me, showPoints }: { r: RoundRow; me: boolean; showPoints: boolean }) {
