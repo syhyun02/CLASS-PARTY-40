@@ -69,8 +69,13 @@ export interface QuizQ {
   word?: string;
   color?: string;
   options: string[];
+  /** 정답 보기 번호. 화학 모드에서는 채점 전까지 클라이언트가 모른다(-1). */
   answer: number;
+  explain?: string;
 }
+
+/** 보기 팻말을 띄울 자리: 몇 번 문제의 몇 번 보기인지 */
+export interface QuizSign { p: Vec3; q: number; o: number; color: string }
 
 /** 정해진 시각에 나타나는 보물. 먼저 닿은 사람이 가져간다(서버 판정). */
 export interface Item {
@@ -100,6 +105,11 @@ export interface LevelDef {
   bombs?: Bomb[];
   items?: Item[];
   quiz?: QuizQ[];
+  signs?: QuizSign[];
+  /** 눈에만 보이는 빛의 막(충돌 없음). 화학 미로의 문 */
+  curtains?: Box[];
+  /** 경기 시간(초). 지정하면 게임 기본 제한 시간 대신 쓴다. */
+  duration?: number;
   /** true면 떨어져도 부활하지 않는다(생존 게임) */
   noRespawn?: boolean;
   /** 지정하면 격자 대신 원형으로 둘러서서 출발한다 */

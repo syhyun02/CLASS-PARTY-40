@@ -110,7 +110,8 @@ export function Scene({ spectator = false }: { spectator?: boolean }) {
   const levelKey = useStore((s) => s.room?.levelKey);
   const levelId = useStore((s) => s.room?.levelId);
   const levelSeed = useStore((s) => s.room?.levelSeed);
-  const level = useMemo(() => (levelId ? buildLevel(levelId, levelSeed ?? 0) : null), [levelKey]);
+  // 네트워크 쪽과 같은 맵 객체를 쓴다(화학 모드에서 정답이 밝혀지면 그 객체가 바뀐다)
+  const level = useMemo(() => (levelId && net.level?.id === levelId ? net.level : levelId ? buildLevel(levelId, levelSeed ?? 0) : null), [levelKey]);
   const dpr = quality === 'low' ? 1 : quality === 'medium' ? Math.min(1.5, window.devicePixelRatio) : Math.min(2, window.devicePixelRatio);
   const sky = level?.sky ?? ['#aee6ff', '#ffe6f5'];
 

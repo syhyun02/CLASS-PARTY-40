@@ -1,4 +1,5 @@
 import { COUNTDOWN_SEC } from '../constants';
+import type { PublicQ } from '../chem/bank';
 import { NEVER, type LevelDef, type QuizQ, type Tile } from '../level';
 import { rng } from './race';
 
@@ -72,25 +73,32 @@ const GENS: Gen[] = [
  * 문제가 나오면 정답 보기의 발판으로 달려간다. 시간이 되면 오답 발판 3개가 잠깐 사라진다.
  * 가운데 섬은 사라지지 않지만 거기 서 있으면 정답으로 치지 않는다. 틀려도 다음 문제에 다시 참가한다.
  */
-export function buildQuiz(seed: number): LevelDef {
+export function buildQuiz(seed: number, ext?: (PublicQ & { answer?: number; explain?: string })[]): LevelDef {
   const r = rng(seed);
   const tiles: Tile[] = PAD_POS.map(([x, z], i) => ({
     shape: 'box', p: [x, -0.4, z], h: [QUIZ_HALF, 0.4, QUIZ_HALF], color: QUIZ_PADS[i].color, warnAt: NEVER, offAt: NEVER, gaps: [],
   }));
   tiles.push({ shape: 'disc', p: [0, -0.46, 0], h: [2.4, 0.5, 2.4], color: '#ffffff', warnAt: NEVER, offAt: NEVER });
   const quiz: QuizQ[] = [];
-  const order = shuffle(r, [0, 1, 2, 3, 4, Math.floor(r() * 5)]);
   let t = COUNTDOWN_SEC + 1;
-  for (const g of order) {
-    const q = GENS[g](r);
-    const at = t, revealAt = t + 9, endAt = revealAt + 3;
+  const add = (q: Omit<QuizQ, 'at' | 'revealAt' | 'endAt'>, think: number, rest: number) => {
+    const at = t, revealAt = t + think, endAt = revealAt + 3;
     quiz.push({ ...q, at, revealAt, endAt });
-    tiles.forEach((tile, i) => { if (i < 4 && i !== q.answer) tile.gaps!.push([revealAt, endAt]); });
-    t = endAt + 1.4;
+    // 정답을 아는 쪽(서버, 놀이 모드)은 오답 발판이 사라질 구간을 미리 넣어 둔다
+    if (q.answer >= 0) tiles.forEach((tile, i) => { if (i < 4 && i !== q.answer) tile.gaps!.push([revealAt, endAt]); });
+    t = endAt + rest;
+  };
+  if (ext?.length) {
+    // 화학 모드: 읽고 생각할 시간을 넉넉히, 채점 뒤에는 해설을 읽을 시간을 준다
+    for (const e of ext) add({ text: e.text, options: e.options, answer: e.answer ?? -1, explain: e.explain }, 15, 4.5);
+  } else {
+    for (const g of shuffle(r, [0, 1, 2, 3, 4, Math.floor(r() * 5)])) add(GENS[g](r), 9, 1.4);
   }
   return {
     id: 'answer', name: '정답 발판 배틀',
     statics: [], movers: [], sweepers: [], pads: [], tiles, quiz,
+    signs: quiz.flatMap((_, qi) => PAD_POS.map(([x, z], o) => ({ p: [x, 3.1, z] as [number, number, number], q: qi, o, color: QUIZ_PADS[o].color }))),
+    duration: t - COUNTDOWN_SEC + 0.5,
     checkpoints: [{ zone: { p: [0, 0, 0], h: [0, 0, 0] }, spawn: [0, 0.05, 0] }],
     spawnCols: 8, spawnSpacing: 1.5, spawnRing: 1.9, killY: -7,
     sky: ['#3fb0ff', '#ffe3f4'],

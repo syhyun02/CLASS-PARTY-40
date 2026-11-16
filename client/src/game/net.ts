@@ -2,8 +2,8 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { io, type Socket } from 'socket.io-client';
 import {
   DT, FLAG_HIDDEN, NO_INPUT, SimWorld, TICK_RATE, buildLevel, decodeSnapshot, newPlayerState, unpackState,
-  type CreateRes, type HostCmd, type JoinRes, type LevelDef, type PlayerInput, type PlayerState, type RoomConfig,
-  type GameStateMsg, type RoomState, type SelfMsg, type SnapPlayer,
+  type CollectState, type CreateRes, type HostCmd, type JoinRes, type LevelDef, type PlayerInput, type PlayerState, type RoomConfig,
+  type GameStateMsg, type PersonalMsg, type RoomState, type SelfMsg, type SnapPlayer,
 } from '@shared';
 import { actionHeld, input, jumpHeld, resetCamera, worldMove } from './input';
 import { useStore } from './store';
@@ -65,7 +65,13 @@ class GameNet {
     s.on('room', (r: RoomState) => this.onRoom(r));
     s.on('s', (buf: ArrayBuffer) => this.onSnapshot(buf));
     s.on('me', (m: SelfMsg) => this.onSelf(m));
-    s.on('g', (m: GameStateMsg) => { if (m.key === this.levelKey) useStore.setState({ game: m.state }); });
+    s.on('g', (m: GameStateMsg) => { if (m.key === this.levelKey) { this.applyGameState(m.state); useStore.setState({ game: m.state }); } });
+    s.on('gp', (m: PersonalMsg) => {
+      if (m.key !== this.levelKey) return;
+      const cur = useStore.getState().mine;
+      if (m.pass) useStore.setState({ mine: { passed: m.pass.q + 1, wrong: cur.wrong, explain: { q: m.pass.q, text: m.pass.explain, first: m.pass.first } } });
+      else if (m.wrong) useStore.setState({ mine: { ...cur, wrong: [...cur.wrong, m.wrong] } });
+    });
     s.on('kicked', () => this.exit('선생님이 내보냈어요.'));
     s.on('replaced', () => this.exit('다른 기기에서 같은 이름으로 접속했어요.'));
     setInterval(() => {
@@ -98,6 +104,7 @@ class GameNet {
     if (!res.ok) return res.error ?? '방을 만들지 못했어요.';
     this.role = 'host';
     sessionStorage.setItem('cp40:session', JSON.stringify({ role: 'host', code: res.code, hostToken: res.hostToken }));
+    this.sendSavedBank();
     useStore.setState({ screen: 'host', myId: null });
     return null;
   }
@@ -125,6 +132,7 @@ class GameNet {
       const res = await new Promise<CreateRes>((ok) => s.emit('host:resume', sess, ok));
       if (!res.ok) { sessionStorage.removeItem('cp40:session'); return false; }
       this.role = 'host';
+      this.sendSavedBank();
       useStore.setState({ screen: 'host' });
       return true;
     }
@@ -134,6 +142,13 @@ class GameNet {
   }
 
   hostCmd(cmd: HostCmd) { this.socket?.emit('host:cmd', cmd); }
+  /** 교사 브라우저에 저장해 둔 문제은행이 있으면 방에 적용한다(서버를 다시 켜도 문제가 유지된다). */
+  private sendSavedBank() {
+    try {
+      const raw = localStorage.getItem('cp40:bank');
+      if (raw) this.hostCmd({ type: 'bank', bank: JSON.parse(raw) });
+    } catch { /* 저장된 값이 깨졌으면 기본 문제를 쓴다 */ }
+  }
   setColor(c: string) {
     this.socket?.emit('color', c);
     const raw = sessionStorage.getItem('cp40:session');
@@ -148,13 +163,30 @@ class GameNet {
     useStore.setState({ room: r });
   }
 
+  /**
+   * 화학 모드에서는 정답을 서버만 알고 있다가 채점하는 순간에 알려 준다.
+   * 그때 맵 데이터에 정답을 써넣어, 오답 발판이 사라지거나 정답 문이 열리게 한다(예측 물리도 같은 데이터를 본다).
+   */
+  private applyGameState(st: CollectState | null) {
+    const lv = this.level;
+    if (!st || !lv?.quiz) return;
+    if (st.quiz && st.quiz.answer !== undefined) {
+      const q = lv.quiz[st.quiz.index];
+      if (q && q.answer < 0) {
+        q.answer = st.quiz.answer;
+        q.explain = st.quiz.explain;
+        lv.tiles?.forEach((t, i) => { if (i < 4 && i !== q.answer) (t.gaps ??= []).push([q.revealAt, q.endAt]); });
+      }
+    }
+  }
+
   private loadLevel(r: RoomState) {
     this.sim?.free();
-    this.level = buildLevel(r.levelId, r.levelSeed);
+    this.level = buildLevel(r.levelId, r.levelSeed, r.levelQuiz);
     this.sim = new SimWorld(RAPIER, this.level);
     this.levelKey = r.levelKey;
     this.levelTick = r.levelTick;
-    useStore.setState({ game: null });
+    useStore.setState({ game: null, mine: { passed: 0, wrong: [], explain: null } });
     this.snaps = [];
     this.pending = [];
     this.history.clear();

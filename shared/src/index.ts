@@ -4,3 +4,5 @@ export * from './games';
 export * from './sim';
 export * from './protocol';
 export * from './levels/quiz';
+export * from './chem/bank';
+export * from './levels/maze';

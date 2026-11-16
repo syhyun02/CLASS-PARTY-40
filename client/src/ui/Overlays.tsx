@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { GAMES, QUIZ_PADS, getGame, type RoomState, type RoundRow } from '@shared';
+import { GAMES, QUIZ_PADS, chemRowZ, getGame, type RoomState, type RoundRow } from '@shared';
 import { net } from '../game/net';
 import { setQuality, useStore, type Quality } from '../game/store';
 import { useSecondsLeft, useTicker } from './hooks';
@@ -180,6 +180,7 @@ export function QuizHud({ myId }: { room: RoomState; myId: number | null }) {
   const ok = graded && myId !== null ? graded.correct.includes(myId) : null;
   const left = q ? Math.max(0, q.revealAt - t) : 0;
   const flashing = !!q?.flash && t - q.at < 3.5;
+  const long = !!q && q.options.some((o) => o.length > 7);
   return (
     <div className={HUD_BAR} style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}>
       <div className="chip tabular-nums">{myId !== null ? <>✅ <b className="text-xl text-bubble">{mine}</b> / {quiz.length}</> : '✅ 정답 발판'}</div>
@@ -193,10 +194,10 @@ export function QuizHud({ myId }: { room: RoomState; myId: number | null }) {
             <div className="font-display text-5xl leading-none" style={{ color: q.color, WebkitTextStroke: '6px #2b2145', paintOrder: 'stroke fill' }}>{q.word}</div>
           )}
           {(!q.flash || !flashing) && <div className="whitespace-pre-line font-display text-lg leading-tight sm:text-2xl">{q.text}</div>}
-          <div className="grid w-full grid-cols-4 gap-1">
+          <div className={`grid w-full gap-1 ${long ? 'grid-cols-2' : 'grid-cols-4'}`}>
             {q.options.map((o, i) => (
-              <div key={i} className={`flex items-center justify-center gap-1 rounded-xl border-4 px-1 py-0.5 font-display text-lg ${revealed ? (i === q.answer ? 'bg-mint' : 'opacity-35') : 'bg-white'}`} style={{ borderColor: QUIZ_PADS[i].color }}>
-                <span className="truncate">{o}</span>
+              <div key={i} className={`flex items-center justify-center gap-1 rounded-xl border-4 px-1 py-0.5 font-display ${long ? 'text-sm leading-tight' : 'text-lg'} ${revealed && q.answer >= 0 ? (i === q.answer ? 'bg-mint' : 'opacity-35') : 'bg-white'}`} style={{ borderColor: QUIZ_PADS[i].color }}>
+                <span className={long ? '' : 'truncate'}>{o}</span>
               </div>
             ))}
           </div>
@@ -207,6 +208,7 @@ export function QuizHud({ myId }: { room: RoomState; myId: number | null }) {
           ) : ok !== null && (
             <div key={qi} className={`animate-pop font-display text-2xl ${ok ? 'text-[#2f9e44]' : 'text-bubble'}`}>{ok ? '⭕ 정답!' : '❌ 아쉬워요'}</div>
           )}
+          {revealed && q.explain && <div className="rounded-xl bg-cream px-2 py-1 text-left text-sm leading-snug">💡 {q.explain}</div>}
         </div>
       ) : <div className="chip">곧 첫 문제가 나와요</div>}
       <div className="w-16" />
@@ -214,10 +216,44 @@ export function QuizHud({ myId }: { room: RoomState; myId: number | null }) {
   );
 }
 
+/** 화학 미로: 레이스 정보 + 지금 풀 문제 + 방금 통과한 문제의 해설 */
+export function ChemMazeHud({ room, myId }: { room: RoomState; myId: number | null }) {
+  useTicker(4);
+  const mine = useStore((s) => s.mine);
+  const quiz = net.level?.quiz ?? [];
+  const me = net.renderPlayers().find((p) => p.isMe);
+  // 학생은 자기가 풀 차례인 문제를, 교사 화면은 선두가 풀고 있는 문제를 본다
+  const lead = net.renderPlayers().reduce((m, p) => Math.max(m, p.z), 0);
+  let qi = myId !== null ? mine.passed : quiz.findIndex((_, i) => chemRowZ(i) > lead - 0.5);
+  if (qi < 0) qi = quiz.length;
+  const q = quiz[qi];
+  const ex = mine.explain;
+  // 해설은 다음 문 앞에 닿기 전까지 보여 준다
+  const showEx = ex && ex.text && (!q || !me || me.z < chemRowZ(qi) - 5) ? ex : null;
+  return (
+    <>
+      <RaceHud room={room} myId={myId} />
+      <div className="pointer-events-none absolute inset-x-0 top-[4.2rem] z-10 flex flex-col items-center gap-1 px-3">
+        {showEx ? (
+          <div key={showEx.q} className="card w-[min(560px,72vw)] animate-pop !bg-cream !p-2 text-left text-sm leading-snug">
+            <b className="font-display text-[#2f9e44]">⭕ 문제 {showEx.q + 1} 통과{showEx.first ? ' · 한 번에 정답!' : ''}</b> 💡 {showEx.text}
+          </div>
+        ) : q && (
+          <div className="card w-[min(560px,72vw)] !p-2 text-center">
+            <div className="text-xs opacity-60">문제 {qi + 1} / {quiz.length} · {myId !== null ? '정답이 걸린 문으로! (보기 순서는 사람마다 달라요)' : '학생마다 보기 순서가 달라요'}</div>
+            <div className="whitespace-pre-line font-display text-base leading-tight sm:text-xl">{q.text}</div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 /** 게임 장르에 맞는 경기 중 HUD */
 export function GameHud({ room, myId }: { room: RoomState; myId: number | null }) {
   if (room.gameId === 'tail') return <TailHud room={room} myId={myId} />;
   if (room.gameId === 'answer') return <QuizHud room={room} myId={myId} />;
+  if (room.gameId === 'chemmaze') return <ChemMazeHud room={room} myId={myId} />;
   const genre = getGame(room.gameId ?? '')?.genre;
   if (genre === 'race') return <RaceHud room={room} myId={myId} />;
   if (genre === 'collect') return <CollectHud room={room} myId={myId} />;

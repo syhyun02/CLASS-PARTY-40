@@ -1,4 +1,5 @@
-import type { Box, LevelDef, Mover } from '../level';
+import type { PublicQ } from '../chem/bank';
+import { NEVER, type Box, type LevelDef, type Mover, type QuizQ, type QuizSign } from '../level';
 import { rng } from './race';
 
 const W = 11; // 미로 절반 폭
@@ -64,6 +65,70 @@ export function buildMaze(seed: number): LevelDef {
     ],
     spawnCols: 10, spawnSpacing: 1.5, killY: -9,
     finish, track: { z0: 3, z1: fz },
+    sky: ['#3fb0ff', '#ffe3f4'],
+  };
+}
+
+export const CHEM_DOOR_X = [6.4, 0, -6.4]; // 화면 왼쪽 → 오른쪽 순서(카메라가 +z를 볼 때 +x가 왼쪽)
+export const CHEM_DOOR_HALF = 1.6;
+const DOOR_COLORS = ['#ff6b6b', '#ffd43b', '#4dabf7'];
+/** 화학 미로에서 i번째 문제의 벽이 있는 z */
+export const chemRowZ = (i: number) => 14 + i * 10;
+
+/**
+ * 학생마다 문 세 개에 보기가 다른 순서로 걸린다(남이 지나간 문을 따라가도 소용없게).
+ * 돌려주는 배열의 d번째 값이 d번 문에 걸린 보기 번호다. 서버와 클라이언트가 같은 계산을 한다.
+ */
+export function chemDoorOrder(seed: number, playerId: number, row: number): number[] {
+  const r = rng((seed ^ (playerId * 7919) ^ (row * 104729)) >>> 0);
+  const o = [0, 1, 2];
+  for (let i = 2; i > 0; i--) { const k = Math.floor(r() * (i + 1)); [o[i], o[k]] = [o[k], o[i]]; }
+  return o;
+}
+
+/**
+ * 화학 미로 "정답의 문"
+ * 가로벽마다 문제가 하나씩 걸려 있고 빛의 문이 셋 있다. 정답 보기가 걸린 문은 그대로 통과하고,
+ * 오답 문은 튕겨 내며 잠깐 넘어진다. 문은 눈에만 보이는 막이고 통과 여부는 서버가 학생별로 판정한다.
+ */
+export function buildChemMaze(_seed: number, ext?: (PublicQ & { answer?: number; explain?: string })[]): LevelDef {
+  const qs = ext?.length ? ext : [];
+  const rows = Math.max(1, qs.length), z0 = chemRowZ(0), zEnd = chemRowZ(rows - 1) + 8;
+  const statics: Box[] = [];
+  const curtains: Box[] = [];
+  const quiz: QuizQ[] = [];
+  const signs: QuizSign[] = [];
+  statics.push({ p: [0, -0.5, (zEnd + 4 - 8) / 2], h: [W, 0.5, (zEnd + 4 + 8) / 2], color: '#5fe0a8' });
+  statics.push({ p: [-W + 0.3, WALL_H, (z0 + zEnd) / 2 - 3], h: [0.3, WALL_H, (zEnd - z0) / 2 + 3], color: '#7048e8' });
+  statics.push({ p: [W - 0.3, WALL_H, (z0 + zEnd) / 2 - 3], h: [0.3, WALL_H, (zEnd - z0) / 2 + 3], color: '#7048e8' });
+  for (let i = 0; i < rows; i++) {
+    const z = chemRowZ(i);
+    // 문 셋 사이와 양 끝을 막는 벽
+    const edges = [W - 0.6, ...CHEM_DOOR_X.flatMap((x) => [x + CHEM_DOOR_HALF, x - CHEM_DOOR_HALF]), -W + 0.6];
+    for (let k = 0; k < edges.length; k += 2) {
+      const a = edges[k], b = edges[k + 1];
+      if (a - b > 0.2) statics.push({ p: [(a + b) / 2, WALL_H, z], h: [(a - b) / 2, WALL_H, 0.3], color: '#b693ff' });
+    }
+    CHEM_DOOR_X.forEach((x, d) => {
+      curtains.push({ p: [x, WALL_H, z], h: [CHEM_DOOR_HALF, WALL_H, 0.05], color: DOOR_COLORS[d] });
+      signs.push({ p: [x, WALL_H * 2 + 1.3, z], q: i, o: d, color: DOOR_COLORS[d] });
+    });
+    const e = qs[i];
+    quiz.push({ at: 0, revealAt: NEVER, endAt: NEVER, text: e?.text ?? '', options: e?.options ?? ['', '', ''], answer: e?.answer ?? -1, explain: e?.explain });
+  }
+  const fz = zEnd;
+  const finish: Box = { p: [0, 3, fz + 3], h: [W, 6, 3] };
+  statics.push({ p: [-W + 0.4, 2, fz], h: [0.4, 2, 0.4], color: '#ffffff' });
+  statics.push({ p: [W - 0.4, 2, fz], h: [0.4, 2, 0.4], color: '#ffffff' });
+  return {
+    id: 'chemmaze', name: '정답의 문',
+    statics, movers: [], sweepers: [], pads: [], curtains, quiz, signs,
+    checkpoints: [
+      { zone: { p: [0, 0, 0], h: [0, 0, 0] }, spawn: [0, 0, 5] },
+      { zone: finish, spawn: [0, 0, fz + 4] },
+    ],
+    spawnCols: 10, spawnSpacing: 1.5, killY: -9,
+    finish, track: { z0: 5, z1: fz },
     sky: ['#3fb0ff', '#ffe3f4'],
   };
 }

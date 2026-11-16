@@ -1,4 +1,5 @@
 import { SNAP_POS_SCALE } from './constants';
+import type { BankQ, ChemFilter, PublicQ } from './chem/bank';
 import type { GameMode } from './games';
 
 export type Phase = 'lobby' | 'draw' | 'countdown' | 'playing' | 'result' | 'final';
@@ -31,6 +32,8 @@ export interface RoomConfig {
   mode: GameMode;
   rounds: number;
   games: string[]; // 추첨에 넣을 미니게임 id
+  /** 화학 모드 출제 범위(단원, 난이도) */
+  chem?: ChemFilter;
 }
 
 export interface RoomState {
@@ -44,6 +47,10 @@ export interface RoomState {
   levelId: string;
   levelSeed: number;
   levelKey: string;
+  /** 화학 모드에서 이번 맵에 쓰는 문제(정답 제외) */
+  levelQuiz: PublicQ[] | null;
+  /** 방의 문제은행에 든 문제 수 */
+  bankSize: number;
   /** 맵 시간의 기준 틱(움직이는 장애물 위상 = tick - levelTick) */
   levelTick: number;
   /** 현재 단계가 끝나는 서버 틱(없으면 0) */
@@ -64,7 +71,8 @@ export interface CreateRes { ok: boolean; code?: string; hostToken?: string; err
 export type HostCmd =
   | { type: 'start' } | { type: 'pause' } | { type: 'resume' } | { type: 'skip' }
   | { type: 'end' } | { type: 'toLobby' } | { type: 'kick'; id: number }
-  | { type: 'config'; config: RoomConfig };
+  | { type: 'config'; config: RoomConfig }
+  | { type: 'bank'; bank: BankQ[] };
 
 /** 클라이언트 → 서버 입력: [seq, mx(-127~127), mz, 버튼비트] */
 export type InputMsg = [number, number, number, number];
@@ -127,6 +135,9 @@ export interface CollectState {
   /** 꼬리를 가진 플레이어 번호 */
   tails?: number[];
   /** 가장 최근에 채점한 문제 번호와 맞힌 사람 */
-  quiz?: { index: number; correct: number[] };
+  quiz?: { index: number; correct: number[]; answer?: number; explain?: string };
 }
 export interface GameStateMsg { key: string; state: CollectState | null }
+
+/** 한 학생에게만 보내는 알림(화학 미로): 통과한 문제와 해설, 또는 틀린 문 */
+export interface PersonalMsg { key: string; pass?: { q: number; explain: string; first: boolean }; wrong?: [number, number] }

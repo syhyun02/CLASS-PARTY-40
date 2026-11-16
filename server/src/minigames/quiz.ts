@@ -23,7 +23,8 @@ export const quizGame = (id: string): MinigameServer => ({
             right.set(p.id, (right.get(p.id) ?? 0) + 1);
           }
         }
-        const st: CollectState = { quiz: { index: next, correct }, scores: [...right.entries()] };
+        // 정답과 해설은 채점하는 이 순간에만 내보낸다(화학 모드에서 미리 알 수 없게)
+        const st: CollectState = { quiz: { index: next, correct, answer: q.answer, explain: q.explain }, scores: [...right.entries()] };
         ctx.publish(st);
         next++;
       },

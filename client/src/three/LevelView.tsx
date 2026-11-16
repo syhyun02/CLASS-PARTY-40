@@ -1,7 +1,7 @@
 import { useFrame } from '@react-three/fiber';
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { QUIZ_PADS, QUIZ_PAD_POS, moverOffset, sweeperAngle, type LevelDef, type Tile } from '@shared';
+import { chemDoorOrder, moverOffset, sweeperAngle, type LevelDef, type Tile } from '@shared';
 import { net } from '../game/net';
 import { useStore } from '../game/store';
 
@@ -368,54 +368,94 @@ function Bombs({ level }: { level: LevelDef }) {
   );
 }
 
-/** 정답 발판 위에 떠 있는 보기 팻말. 문제가 바뀔 때만 다시 그린다. */
+/** 글자를 폭에 맞춰 여러 줄로 나눠 그린다. 긴 보기는 글자 크기를 줄인다. */
+function drawWrapped(g: CanvasRenderingContext2D, text: string, cx: number, cy: number, maxW: number, maxH: number) {
+  for (const size of [96, 72, 56, 44, 36, 30]) {
+    g.font = `700 ${size}px Jua, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif`;
+    const lines: string[] = [];
+    let line = '';
+    for (const word of text.split(/(\s+)/)) {
+      if (g.measureText(line + word).width > maxW && line.trim()) { lines.push(line.trim()); line = word.trim() ? word : ''; }
+      else line += word;
+    }
+    if (line.trim()) lines.push(line.trim());
+    const lh = size * 1.12;
+    if (lines.length * lh <= maxH && lines.every((l) => g.measureText(l).width <= maxW) || size === 30) {
+      lines.forEach((l, i) => g.fillText(l, cx, cy + (i - (lines.length - 1) / 2) * lh, maxW));
+      return;
+    }
+  }
+}
+
+/**
+ * 보기 팻말: 정답 발판 위나 화학 미로의 문 위에 보기 내용을 띄운다.
+ * 상태(보임, 정답 공개, 오답 표시)가 바뀔 때만 캔버스를 다시 그린다.
+ */
 function QuizSigns({ level }: { level: LevelDef }) {
   const quiz = level.quiz ?? [];
+  const defs = level.signs ?? [];
   const group = useRef<THREE.Group>(null!);
-  const signs = useMemo(() => QUIZ_PADS.map(() => {
+  const always = level.id === 'chemmaze'; // 미로는 모든 문제의 문이 동시에 보인다
+  const signs = useMemo(() => defs.map(() => {
     const c = document.createElement('canvas');
-    c.width = 512; c.height = 256;
+    c.width = 448; c.height = 224;
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
-    return { c, tex };
+    return { c, tex, key: '' };
   }), [level]);
-  const shown = useRef('');
   useEffect(() => () => signs.forEach((s) => s.tex.dispose()), [signs]);
 
   useFrame((state) => {
-    if (!quiz.length) return;
+    if (!defs.length) return;
     const t = net.levelTime();
-    let qi = -1;
-    for (let i = 0; i < quiz.length; i++) if (quiz[i].at <= t) qi = i;
-    const q = qi >= 0 ? quiz[qi] : null;
-    const revealed = !!q && t >= q.revealAt;
-    const key = `${qi}:${revealed}`;
-    if (key !== shown.current) {
-      shown.current = key;
-      signs.forEach((s, i) => {
+    let cur = -1;
+    for (let i = 0; i < quiz.length; i++) if (quiz[i].at <= t) cur = i;
+    const st = useStore.getState();
+    const mine = st.mine;
+    const seed = st.room?.levelSeed ?? 0;
+    defs.forEach((d, i) => {
+      const sp = group.current.children[i] as THREE.Sprite;
+      const q = quiz[d.q];
+      // 화학 미로: 내 번호로 정해지는 순서대로 보기를 건다. 관전자(교사 화면)에게는 보기를 띄우지 않는다.
+      const opt = always ? (st.myId !== null ? chemDoorOrder(seed, st.myId, d.q)[d.o] : -1) : d.o;
+      const text = q && opt >= 0 ? q.options[opt] : '';
+      const visible = !!q && (always || d.q === cur) && !!text;
+      sp.visible = visible;
+      if (!visible) return;
+      let right: boolean, bad: boolean;
+      if (always) {
+        right = false;
+        bad = mine.wrong.some((w) => w[0] === d.q && w[1] === d.o);
+        if (d.q < mine.passed) { sp.visible = false; return; } // 통과한 문제의 팻말은 치운다
+      } else {
+        const revealed = t >= q.revealAt && q.answer >= 0;
+        right = revealed && q.answer === d.o;
+        bad = revealed && !right;
+      }
+      const key = `${right}:${bad}:${text}`;
+      const s = signs[i];
+      if (s.key !== key) {
+        s.key = key;
         const g = s.c.getContext('2d')!;
-        g.clearRect(0, 0, 512, 256);
-        const right = revealed && q!.answer === i;
-        g.fillStyle = revealed && !right ? 'rgba(43,33,69,0.45)' : '#ffffff';
-        g.beginPath(); g.roundRect(16, 16, 480, 224, 56); g.fill();
-        g.lineWidth = 16; g.strokeStyle = right ? '#2f9e44' : QUIZ_PADS[i].color; g.stroke();
-        g.fillStyle = revealed && !right ? '#ffffff' : '#2b2145';
+        g.clearRect(0, 0, 448, 224);
+        g.fillStyle = bad ? 'rgba(43,33,69,0.55)' : right ? '#d3f9d8' : '#ffffff';
+        g.beginPath(); g.roundRect(12, 12, 424, 200, 44); g.fill();
+        g.lineWidth = 14; g.strokeStyle = right ? '#2f9e44' : bad ? '#ff6b6b' : d.color; g.stroke();
+        g.fillStyle = bad ? '#ffffff' : '#2b2145';
         g.textAlign = 'center'; g.textBaseline = 'middle';
-        const text = q ? q.options[i] : QUIZ_PADS[i].name;
-        g.font = `700 ${text.length > 4 ? 84 : 124}px Jua, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif`;
-        g.fillText(right ? `⭕ ${text}` : text, 256, 134);
+        drawWrapped(g, (right ? '⭕ ' : bad ? '✕ ' : '') + text, 224, 116, 384, 172);
         s.tex.needsUpdate = true;
-      });
-    }
-    group.current.children.forEach((m, i) => { m.position.y = 3.1 + Math.sin(state.clock.elapsedTime * 2 + i) * 0.12; });
+      }
+      sp.position.y = d.p[1] + Math.sin(state.clock.elapsedTime * 2 + i) * 0.1;
+    });
   });
 
-  if (!quiz.length) return null;
+  if (!defs.length) return null;
   return (
     <group ref={group}>
-      {signs.map((s, i) => (
-        <sprite key={i} position={[QUIZ_PAD_POS[i][0], 3.1, QUIZ_PAD_POS[i][1]]} scale={[3.6, 1.8, 1]} renderOrder={6}>
-          <spriteMaterial map={s.tex} transparent depthWrite={false} />
+      {defs.map((d, i) => (
+        <sprite key={i} position={d.p} scale={[3.6, 1.8, 1]} renderOrder={6} visible={false}>
+          <spriteMaterial map={signs[i].tex} transparent depthWrite={false} />
         </sprite>
       ))}
     </group>
@@ -544,6 +584,12 @@ export function LevelView({ level }: { level: LevelDef }) {
       <Tiles level={level} low={low} />
       <Bombs level={level} />
       <QuizSigns level={level} />
+      {(level.curtains ?? []).map((c, i) => (
+        <mesh key={i} position={c.p} scale={[c.h[0], c.h[1], 1]}>
+          <planeGeometry args={[2, 2]} />
+          <meshBasicMaterial color={c.color} transparent opacity={0.42} side={THREE.DoubleSide} depthWrite={false} />
+        </mesh>
+      ))}
       <Items level={level} />
       <instancedMesh ref={strips} args={[box, undefined, Math.max(1, cps.length)]} count={cps.length}>
         <meshBasicMaterial color="#ffffff" transparent opacity={0.85} />

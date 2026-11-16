@@ -11,6 +11,8 @@ interface Store {
   room: RoomState | null;
   /** 미니게임별 실시간 상태(보물 점수 등) */
   game: CollectState | null;
+  /** 나에게만 온 알림(화학 미로): 통과한 문제, 틀린 문, 마지막 해설 */
+  mine: { passed: number; wrong: [number, number][]; explain: { q: number; text: string; first: boolean } | null };
   myId: number | null;
   myName: string;
   online: boolean;
@@ -28,6 +30,7 @@ export const useStore = create<Store>((set) => ({
   screen: 'home',
   room: null,
   game: null,
+  mine: { passed: 0, wrong: [], explain: null },
   myId: null,
   myName: '',
   online: false,

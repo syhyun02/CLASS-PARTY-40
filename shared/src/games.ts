@@ -2,7 +2,8 @@ import type { LevelDef } from './level';
 import { buildLobby } from './levels/lobby';
 import { buildRace } from './levels/race';
 import { buildBomb, buildLast, buildSpinner, buildSumo, buildTail, buildTiles, buildTreasure } from './levels/arenas';
-import { buildMaze } from './levels/maze';
+import type { PublicQ } from './chem/bank';
+import { buildChemMaze, buildMaze } from './levels/maze';
 import { buildQuiz } from './levels/quiz';
 
 export type GameMode = 'play' | 'chem';
@@ -20,7 +21,9 @@ export interface GameMeta {
   implemented: boolean;
   /** 특수 행동 버튼을 쓰는 게임이면 버튼에 적을 이름 */
   action?: string;
-  buildLevel: (seed: number) => LevelDef;
+  /** 화학 모드에서 문제은행 문제를 쓰는 학습형 게임: 문제 수와 보기 수 */
+  chem?: { questions: number; options: number };
+  buildLevel: (seed: number, quiz?: (PublicQ & { answer?: number; explain?: string })[]) => LevelDef;
 }
 
 export const GAMES: GameMeta[] = [
@@ -51,6 +54,12 @@ export const GAMES: GameMeta[] = [
   {
     id: 'answer', name: '정답 발판 배틀', emoji: '✅', genre: 'quiz', modes: ['play', 'chem'],
     howTo: '문제를 보고 정답 발판으로! 오답 발판은 사라져요', timeLimit: 86, implemented: true, buildLevel: buildQuiz,
+    chem: { questions: 5, options: 4 },
+  },
+  {
+    id: 'chemmaze', name: '정답의 문', emoji: '🚪', genre: 'race', modes: ['chem'],
+    howTo: '정답이 적힌 문에 닿으면 열려요. 오답 문은 튕겨 내요!', timeLimit: 120, implemented: true, buildLevel: buildChemMaze,
+    chem: { questions: 5, options: 3 },
   },
   {
     id: 'bomb', name: '펑펑 광장', emoji: '💣', genre: 'survival', modes: ['play', 'chem'],
@@ -68,11 +77,11 @@ export const GAMES: GameMeta[] = [
 
 export const getGame = (id: string) => GAMES.find((g) => g.id === id);
 
-export function buildLevel(levelId: string, seed: number): LevelDef {
+export function buildLevel(levelId: string, seed: number, quiz?: (PublicQ & { answer?: number; explain?: string })[] | null): LevelDef {
   if (levelId === 'lobby') return buildLobby();
   const g = getGame(levelId);
   if (!g) throw new Error(`unknown level ${levelId}`);
-  return g.buildLevel(seed);
+  return g.buildLevel(seed, quiz ?? undefined);
 }
 
 /** 순위 → 점수. 1위 100, 2위 95, 3위 90, 이후 2점씩 감소(최저 10). */

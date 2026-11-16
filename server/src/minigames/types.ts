@@ -33,6 +33,10 @@ export interface GameCtx {
   levelTime(): number;
   /** 게임별 실시간 상태를 전원에게 보낸다(자주 불러도 서버가 묶어서 보낸다) */
   publish(state: unknown): void;
+  /** 한 학생에게만 알린다 */
+  tell(id: number, msg: Record<string, unknown>): void;
+  /** 이번 맵의 시드 */
+  seed: number;
   /** 플레이어 정보가 바뀌었음을 알린다 → 방 상태 재전송 */
   touch(): void;
 }

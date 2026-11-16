@@ -1,9 +1,10 @@
 import QRCode from 'qrcode';
 import { useEffect, useMemo, useState } from 'react';
-import { GAMES, MAX_PLAYERS, getGame, type RoomState } from '@shared';
+import { GAMES, LEVEL_LABEL, MAX_PLAYERS, getGame, type QLevel, type RoomState } from '@shared';
 import { net } from '../game/net';
 import { useStore } from '../game/store';
 import { Scene } from '../three/Scene';
+import { BankEditor } from './BankEditor';
 import { useSecondsLeft } from './hooks';
 import { Blob, CountdownOverlay, DrawOverlay, FinalOverlay, GameHud, ResultOverlay, StatusOverlays, standings } from './Overlays';
 
@@ -43,6 +44,7 @@ const Blob2 = globalThis.Blob;
 export function HostScreen() {
   const room = useStore((s) => s.room);
   const [wide, setWide] = useState(false);
+  const [bankOpen, setBankOpen] = useState(false);
   const [qr, setQr] = useState('');
   const url = useJoinUrl(room?.code ?? '');
   const left = useSecondsLeft(2);
@@ -88,6 +90,7 @@ export function HostScreen() {
         <StatusOverlays room={room} />
       </div>
 
+      {bankOpen && <BankEditor onClose={() => setBankOpen(false)} />}
       {!wide && (
         <aside className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto border-t-4 border-ink/10 p-3 lg:w-[380px] lg:flex-none lg:border-l-4 lg:border-t-0">
           <div className="flex items-center justify-between gap-2">
@@ -121,9 +124,30 @@ export function HostScreen() {
                 <button className="chip" onClick={() => cmd({ type: 'config', config: { ...room.config, rounds: Math.min(20, room.config.rounds + 1) } })}>＋</button>
               </div>
               <div className="flex flex-wrap gap-1">
-                {GAMES.filter((g) => g.implemented).map((g) => (
+                {GAMES.filter((g) => g.implemented && g.modes.includes(room.config.mode)).map((g) => (
                   <button key={g.id} className={`chip ${room.config.games.includes(g.id) ? '!bg-mint' : 'opacity-50'}`} onClick={() => toggleGame(g.id)}>{g.emoji} {g.name}</button>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {room.config.mode === 'chem' && (
+            <div className="rounded-2xl bg-white p-3 shadow-popsm">
+              <div className="mb-1 flex items-center justify-between font-display">
+                <span>⚗️ 화학 문제 <span className="text-sm opacity-60">({room.bankSize}문제)</span></span>
+                <button className="chip" onClick={() => setBankOpen(true)}>📚 문제은행 편집</button>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {[3, 4].map((u) => {
+                  const c = room.config.chem!, on = c.units.includes(u);
+                  return <button key={u} disabled={!lobby} className={`chip ${on ? '!bg-grape !text-white' : 'opacity-50'}`}
+                    onClick={() => cmd({ type: 'config', config: { ...room.config, chem: { ...c, units: on ? c.units.filter((x) => x !== u) : [...c.units, u] } } })}>{u}단원</button>;
+                })}
+                {(['easy', 'normal', 'hard'] as QLevel[]).map((l) => {
+                  const c = room.config.chem!, on = c.levels.includes(l);
+                  return <button key={l} disabled={!lobby} className={`chip ${on ? '!bg-bubble !text-white' : 'opacity-50'}`}
+                    onClick={() => cmd({ type: 'config', config: { ...room.config, chem: { ...c, levels: on ? c.levels.filter((x) => x !== l) : [...c.levels, l] } } })}>{LEVEL_LABEL[l]}</button>;
+                })}
               </div>
             </div>
           )}

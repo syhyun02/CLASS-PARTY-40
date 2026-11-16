@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { GAMES, PLAYER_COLORS, type GameMode } from '@shared';
+import { GAMES, LEVEL_LABEL, PLAYER_COLORS, type GameMode, type QLevel } from '@shared';
 import { net } from '../game/net';
 import { useStore } from '../game/store';
+import { BankEditor } from './BankEditor';
 import { Blob } from './Overlays';
 
 const MODES: { id: GameMode; title: string; sub: string; emoji: string; ready: boolean }[] = [
   { id: 'play', title: '순수 놀이 모드', sub: '달리고 점프하고 피하는 3D 파티 게임', emoji: '🎈', ready: true },
-  { id: 'chem', title: '물질과 에너지 3·4단원', sub: '화학 변화의 자발성 · 반응 속도', emoji: '⚗️', ready: false },
+  { id: 'chem', title: '물질과 에너지 3·4단원', sub: '화학 변화의 자발성 · 반응 속도 개념 퀴즈가 섞여 나와요', emoji: '⚗️', ready: true },
 ];
 
 function Shell({ children, back }: { children: React.ReactNode; back?: () => void }) {
@@ -58,12 +59,18 @@ export function HostSetup() {
   const set = useStore((s) => s.set);
   const [mode, setMode] = useState<GameMode>('play');
   const [rounds, setRounds] = useState(10);
-  const [games, setGames] = useState<string[]>(GAMES.filter((g) => g.implemented).map((g) => g.id));
+  const [off, setOff] = useState<string[]>([]); // 추첨에서 뺄 게임
+  const [units, setUnits] = useState<number[]>([3, 4]);
+  const [levels, setLevels] = useState<QLevel[]>(['easy', 'normal', 'hard']);
+  const [bankOpen, setBankOpen] = useState(false);
+  const pool = GAMES.filter((g) => g.implemented && g.modes.includes(mode));
+  const games = pool.filter((g) => !off.includes(g.id)).map((g) => g.id);
+  const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? (list.length > 1 ? list.filter((x) => x !== v) : list) : [...list, v]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const create = async () => {
     setBusy(true);
-    const e = await net.createRoom({ mode, rounds, games });
+    const e = await net.createRoom({ mode, rounds, games, chem: { units, levels } });
     setBusy(false);
     if (e) setErr(e);
   };
@@ -79,28 +86,37 @@ export function HostSetup() {
                 className={`rounded-2xl border-4 p-3 text-left transition disabled:opacity-50 ${mode === m.id ? 'border-grape bg-grape/10' : 'border-ink/10 bg-white'}`}>
                 <div className="font-display text-xl">{m.emoji} {m.title}</div>
                 <div className="text-sm opacity-70">{m.sub}</div>
-                {!m.ready && <div className="mt-1 inline-block rounded-full bg-lemon px-2 text-sm font-display">3단계에서 추가돼요</div>}
               </button>
             ))}
           </div>
         </section>
         <section>
           <div className="mb-2 font-display text-lg">2. 미니게임 구성 <span className="text-sm opacity-60">(추첨에 넣을 게임)</span></div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-            {GAMES.map((g) => {
-              const on = games.includes(g.id);
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+            {pool.map((g) => {
+              const on = !off.includes(g.id);
               return (
-                <button key={g.id} disabled={!g.implemented}
-                  onClick={() => setGames(on ? games.filter((x) => x !== g.id) : [...games, g.id])}
-                  className={`rounded-2xl border-4 p-2 text-center disabled:opacity-45 ${on ? 'border-mint bg-mint/20' : 'border-ink/10 bg-white'}`}>
+                <button key={g.id} onClick={() => setOff(on ? [...off, g.id] : off.filter((x) => x !== g.id))}
+                  className={`rounded-2xl border-4 p-2 text-center ${on ? 'border-mint bg-mint/20' : 'border-ink/10 bg-white opacity-60'}`}>
                   <div className="text-2xl">{g.emoji}</div>
                   <div className="font-display text-sm leading-tight">{g.name}</div>
-                  {!g.implemented && <div className="text-xs opacity-70">2단계 예정</div>}
+                  {mode === 'chem' && g.chem && <div className="text-xs text-grape">화학 문제</div>}
                 </button>
               );
             })}
           </div>
         </section>
+        {mode === 'chem' && (
+          <section>
+            <div className="mb-2 font-display text-lg">출제 범위</div>
+            <div className="flex flex-wrap items-center gap-2">
+              {[3, 4].map((u) => <button key={u} className={`chip ${units.includes(u) ? '!bg-grape !text-white' : 'opacity-60'}`} onClick={() => setUnits(toggle(units, u))}>{u}단원</button>)}
+              <span className="opacity-30">|</span>
+              {(['easy', 'normal', 'hard'] as QLevel[]).map((l) => <button key={l} className={`chip ${levels.includes(l) ? '!bg-bubble !text-white' : 'opacity-60'}`} onClick={() => setLevels(toggle(levels, l))}>{LEVEL_LABEL[l]}</button>)}
+              <button className="btn-ghost !py-1.5 !text-base" onClick={() => setBankOpen(true)}>📚 문제은행 편집</button>
+            </div>
+          </section>
+        )}
         <section className="flex flex-wrap items-center gap-3">
           <div className="font-display text-lg">3. 라운드 수</div>
           <button className="btn-ghost !px-4 !py-1" onClick={() => setRounds(Math.max(1, rounds - 1))}>−</button>
@@ -110,6 +126,7 @@ export function HostSetup() {
         {err && <div className="rounded-2xl bg-bubble/20 p-2 font-display text-bubble">{err}</div>}
         <button className="btn-grape text-2xl" disabled={busy || games.length === 0} onClick={create}>{busy ? '만드는 중…' : '방 만들기'}</button>
       </div>
+      {bankOpen && <BankEditor onClose={() => setBankOpen(false)} />}
     </Shell>
   );
 }

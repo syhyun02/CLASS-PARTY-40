@@ -2,9 +2,9 @@ import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import type { Server, Socket } from 'socket.io';
 import {
   COUNTDOWN_SEC, DT, FLAG_ACT, FLAG_DONE, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_MOVING, FLAG_STUN, MAX_PLAYERS, NO_INPUT, PLAYER_COLORS, PLAYER_RADIUS,
-  SNAPSHOT_EVERY, SimWorld, TICK_RATE, buildLevel, encodeSnapshot, getGame, newPlayerState, packState,
+  DEFAULT_BANK, SNAPSHOT_EVERY, SimWorld, TICK_RATE, buildLevel, cleanBank, pickQuestions, encodeSnapshot, getGame, newPlayerState, packState,
   type HostCmd, type InputMsg, type JoinReq, type JoinRes, type LevelDef, type Phase, type PlayerInput,
-  type PlayerState, type RoomConfig, type RoomState, type RoundRow, type SelfMsg, type SnapPlayer,
+  type BankQ, type PickedQ, type PlayerState, type QLevel, type RoomConfig, type RoomState, type RoundRow, type SelfMsg, type SnapPlayer,
 } from '@shared';
 import { drawGame, getMinigame, playableIds } from './minigames';
 import type { GameCtx, GamePlayer, MinigameRuntime } from './minigames/types';
@@ -62,6 +62,11 @@ export class Room {
   private drawn: string[] = [];
   private dirty = true;
   private gameState: unknown = null;
+  /** 교사가 편집한 문제은행(없으면 기본 문제) */
+  private bank: BankQ[] = DEFAULT_BANK;
+  /** 이번 맵에 출제한 문제(정답 포함). 클라이언트에는 정답을 빼고 보낸다. */
+  private levelQuiz: PickedQ[] | null = null;
+  private askedIds = new Set<string>();
   private gameDirty = false;
   lastActive = Date.now();
 
@@ -79,6 +84,10 @@ export class Room {
     this.config.games = this.config.games.filter((g) => ok.includes(g));
     if (this.config.games.length === 0) this.config.games = ok;
     this.config.rounds = Math.max(1, Math.min(20, Math.round(this.config.rounds) || 10));
+    const c = this.config.chem;
+    const units = (c?.units ?? []).filter((u) => u === 3 || u === 4);
+    const levels = (c?.levels ?? []).filter((l): l is QLevel => l === 'easy' || l === 'normal' || l === 'hard');
+    this.config.chem = { units: units.length ? units : [3, 4], levels: levels.length ? levels : ['easy', 'normal', 'hard'] };
   }
 
   // ---------- 입장 / 퇴장 ----------
@@ -156,12 +165,19 @@ export class Room {
   hostCmd(cmd: HostCmd) {
     this.lastActive = Date.now();
     switch (cmd.type) {
+      case 'bank': {
+        // 문제은행 교체: 쓸 수 있는 문제가 하나도 없으면 기본 문제를 유지한다
+        const b = cleanBank(cmd.bank);
+        this.bank = b.length ? b : DEFAULT_BANK;
+        break;
+      }
       case 'config':
         if (this.phase === 'lobby') { this.config = cmd.config; this.sanitizeConfig(); }
         break;
       case 'start':
         if (this.phase === 'lobby' && this.players.size > 0) {
           this.round = 0; this.history = []; this.drawn = []; this.lastResult = null;
+          this.askedIds.clear();
           for (const p of this.players.values()) p.score = 0;
           this.startDraw();
         }
@@ -208,9 +224,10 @@ export class Room {
     this.dirty = true;
   }
 
-  private setLevel(levelId: string, seed: number) {
+  private setLevel(levelId: string, seed: number, quiz: PickedQ[] | null = null) {
     this.sim.free();
-    this.level = buildLevel(levelId, seed);
+    this.levelQuiz = quiz;
+    this.level = buildLevel(levelId, seed, quiz);
     this.sim = new SimWorld(this.R, this.level);
     this.levelId = levelId;
     this.levelSeed = seed;
@@ -228,7 +245,7 @@ export class Room {
 
   private startDraw() {
     this.round++;
-    this.gameId = drawGame(this.config.games, this.drawn);
+    this.gameId = drawGame(this.config.games, this.drawn, this.config.mode);
     this.drawn.push(this.gameId);
     if (this.levelId !== 'lobby') this.setLevel('lobby', 0);
     for (const p of this.players.values()) { p.done = false; p.out = false; p.place = null; p.active = true; }
@@ -237,7 +254,15 @@ export class Room {
 
   private startCountdown() {
     const seed = (Math.random() * 2 ** 31) | 0;
-    this.setLevel(this.gameId!, seed);
+    // 화학 모드의 학습형 게임이면 문제은행에서 이번 판 문제를 뽑는다(같은 경기에서 나온 문제는 뒤로 미룬다)
+    const meta = getGame(this.gameId!)!;
+    let quiz: PickedQ[] | null = null;
+    if (this.config.mode === 'chem' && meta.chem) {
+      const picked = pickQuestions(this.bank, this.config.chem!, meta.chem.questions, Math.random, meta.chem.options, this.askedIds);
+      for (const q of picked) this.askedIds.add(q.id);
+      quiz = picked;
+    }
+    this.setLevel(this.gameId!, seed, quiz);
     this.roundPlayers = [...this.players.values()];
     for (const p of this.roundPlayers) { p.active = true; p.done = false; p.out = false; p.place = null; }
     this.setPhase('countdown', COUNTDOWN_TICKS);
@@ -246,7 +271,7 @@ export class Room {
   private startPlaying() {
     const meta = getGame(this.gameId!)!;
     this.gameStartTick = this.tick;
-    this.setPhase('playing', sec(meta.timeLimit));
+    this.setPhase('playing', sec(this.level.duration ?? meta.timeLimit));
     const room = this;
     const ctx: GameCtx = {
       level: this.level,
@@ -257,6 +282,8 @@ export class Room {
       touch: () => { this.dirty = true; },
       levelTime: () => (this.tick - this.levelTick) * DT,
       tick: () => this.tick,
+      seed: this.levelSeed,
+      tell: (id, msg) => { this.players.get(id)?.socket?.emit('gp', { key: this.levelKey, ...msg }); },
       publish: (st) => { this.gameState = st; this.gameDirty = true; },
     };
     this.runtime = getMinigame(this.gameId!).create(ctx);
@@ -417,6 +444,8 @@ export class Room {
       round: this.round, gameId: this.gameId,
       levelId: this.levelId, levelSeed: this.levelSeed, levelKey: this.levelKey, levelTick: this.levelTick,
       phaseEndTick: this.phaseEndTick,
+      levelQuiz: this.levelQuiz?.map((q) => ({ text: q.text, options: q.options, unit: q.unit, level: q.level })) ?? null,
+      bankSize: this.bank.length,
       players: [...this.players.values()].map((p) => ({
         id: p.id, name: p.name, color: p.color, score: p.score, connected: p.connected, active: p.active, place: p.place, out: p.out,
       })),
