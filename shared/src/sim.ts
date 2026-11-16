@@ -1,7 +1,7 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import {
   AIR_ACCEL, COYOTE_TICKS, DT, GRAVITY, GROUND_ACCEL, JUMP_BUFFER_TICKS, JUMP_VELOCITY,
-  MOVE_SPEED, PLAYER_CENTER_Y, PLAYER_HALF_HEIGHT, PLAYER_RADIUS, STUN_TICKS,
+  MOVE_SPEED, PLAYER_CENTER_Y, PLAYER_HALF_HEIGHT, PLAYER_RADIUS, STUN_TICKS, TICK_RATE,
 } from './constants';
 import { inBox, moverOffset, spawnPoint, sweeperAngle, sweeperSpeed, tileOn, type LevelDef } from './level';
 
@@ -47,6 +47,7 @@ export function newPlayerState(level: LevelDef, slot: number, cp = 0): PlayerSta
   return { x, y, z, vx: 0, vy: 0, vz: 0, yaw, grounded: 1, stun: 0, coyote: 0, jumpBuf: 0, jumpHeld: 0, mover: -1, cp, falls: 0, bomb: 0 };
 }
 
+const REHIT_TICKS = Math.round(0.2 * TICK_RATE); // 회전봉에 맞은 직후 다시 맞지 않는 시간
 const G_LEVEL = 0x0001;
 const G_PLAYER = 0x0002;
 const LEVEL_GROUPS = (G_LEVEL << 16) | G_PLAYER; // 맵: 플레이어와만 충돌
@@ -214,7 +215,7 @@ export class SimWorld {
     }
 
     // 회전봉: 봉이 움직이는 방향으로 날려 보낸다
-    if (s.stun < STUN_TICKS - 6) {
+    if (s.stun < STUN_TICKS - REHIT_TICKS) {
       for (const sw of L.sweepers) {
         const w = sweeperSpeed(sw, this.time);
         if (w === 0) continue; // 아직 돌기 전

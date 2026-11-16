@@ -187,10 +187,10 @@ function Decor({ level, low }: { level: LevelDef; low: boolean }) {
         <meshLambertMaterial color="#eef3ff" emissive="#a9b8f5" emissiveIntensity={0.2} />
       </instancedMesh>
       <instancedMesh ref={balloons} args={[sphere, undefined, nBalloon]} frustumCulled={false}>
-        {low ? <meshLambertMaterial /> : <meshStandardMaterial roughness={0.25} />}
+        <meshLambertMaterial />
       </instancedMesh>
       <instancedMesh ref={rings} args={[torus, undefined, nRing]} frustumCulled={false}>
-        {low ? <meshLambertMaterial /> : <meshStandardMaterial roughness={0.35} />}
+        <meshLambertMaterial />
       </instancedMesh>
       <instancedMesh ref={posts} args={[cyl, undefined, Math.max(1, arches.length * 2)]} count={arches.length * 2} frustumCulled={false}>
         <meshLambertMaterial map={postTex} />
@@ -230,7 +230,7 @@ function goneAmount(b: Tile, t: number): number {
 }
 
 /** 사라지는 발판: 사라지기 전에 깜빡이며 떨다가, 시간이 되면 아래로 떨어진다. */
-function Tiles({ level, low }: { level: LevelDef; low: boolean }) {
+function Tiles({ level, low, cheap }: { level: LevelDef; low: boolean; cheap: boolean }) {
   const all = level.tiles ?? [];
   const boxes = useMemo(() => all.filter((t) => t.shape === 'box'), [level]);
   const discs = useMemo(() => all.filter((t) => t.shape === 'disc'), [level]);
@@ -238,8 +238,8 @@ function Tiles({ level, low }: { level: LevelDef; low: boolean }) {
   const discGroup = useRef<THREE.Group>(null!);
   const box = useMemo(() => new THREE.BoxGeometry(2, 2, 2), []);
   const cyl = useMemo(() => new THREE.CylinderGeometry(1, 1, 2, low ? 32 : 56), [low]);
-  const mat = useMemo(() => makeBlockMaterial(low), [low]);
-  const discMats = useMemo(() => discs.map((d) => { const m = makeBlockMaterial(low, true); m.color.set(d.color ?? '#ffffff'); return m; }), [discs, low]);
+  const mat = useMemo(() => makeBlockMaterial(cheap), [cheap]);
+  const discMats = useMemo(() => discs.map((d) => { const m = makeBlockMaterial(cheap, true); m.color.set(d.color ?? '#ffffff'); return m; }), [discs, cheap]);
   const base = useMemo(() => boxes.map((b) => new THREE.Color(b.color ?? '#ffffff')), [boxes]);
   useEffect(() => () => { mat.dispose(); discMats.forEach((m) => m.dispose()); }, [mat, discMats]);
 
@@ -557,13 +557,14 @@ export function LevelView({ level }: { level: LevelDef }) {
   const quality = useStore((s) => s.quality);
   const shadow = quality === 'high';
   const low = quality === 'low';
+  const cheap = quality !== 'high';
   const statics = useRef<THREE.InstancedMesh>(null!);
   const strips = useRef<THREE.InstancedMesh>(null!);
   const movers = useRef<THREE.Group>(null!);
   const sweepers = useRef<THREE.Group>(null!);
   const pads = useRef<THREE.Group>(null!);
   const box = useMemo(() => new THREE.BoxGeometry(2, 2, 2), []);
-  const blockMat = useMemo(() => makeBlockMaterial(low), [low]);
+  const blockMat = useMemo(() => makeBlockMaterial(cheap), [cheap]);
   const banner = useMemo(() => (level.finish ? bannerTexture() : null), [level]);
   const barTex = useMemo(() => new Map<string, THREE.Texture>(), []);
   const barTexture = (c: string) => {
@@ -571,7 +572,7 @@ export function LevelView({ level }: { level: LevelDef }) {
     return barTex.get(c)!;
   };
   const cps = level.checkpoints.slice(1, level.finish ? -1 : undefined);
-  const moverMats = useMemo(() => level.movers.map((m) => { const mt = makeBlockMaterial(low); mt.color.set(m.color ?? '#ffc078'); return mt; }), [level, low]);
+  const moverMats = useMemo(() => level.movers.map((m) => { const mt = makeBlockMaterial(cheap); mt.color.set(m.color ?? '#ffc078'); return mt; }), [level, cheap]);
   useEffect(() => () => { blockMat.dispose(); moverMats.forEach((m) => m.dispose()); }, [blockMat, moverMats]);
 
   useLayoutEffect(() => {
@@ -623,7 +624,7 @@ export function LevelView({ level }: { level: LevelDef }) {
   return (
     <group>
       <instancedMesh ref={statics} args={[box, blockMat, Math.max(1, level.statics.length)]} count={level.statics.length} receiveShadow={shadow} />
-      <Tiles level={level} low={low} />
+      <Tiles level={level} low={low} cheap={cheap} />
       <Bombs level={level} />
       <QuizSigns level={level} />
       {(level.curtains ?? []).map((c, i) => (

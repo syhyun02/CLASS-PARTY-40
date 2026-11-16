@@ -11,10 +11,13 @@ import { Confetti, LevelView } from './LevelView';
 const target = new THREE.Vector3();
 const want = new THREE.Vector3();
 
+/** 화질 단계별 최대 해상도 배율. 실제 배율은 프레임 시간에 따라 이 값 아래에서 자동으로 오르내린다. */
+const maxDpr = (q: string) => (q === 'low' ? 1 : q === 'medium' ? Math.min(1.5, window.devicePixelRatio) : Math.min(2, window.devicePixelRatio));
+
 /** 네트워크·예측 갱신, 카메라, 자동 화질 조절을 한 프레임에 처리한다. */
 function Driver({ spectator }: { spectator: boolean }) {
   const camera = useThree((s) => s.camera);
-  const fps = useRef({ frames: 0, t: 0, low: 0 });
+  const fps = useRef({ frames: 0, t: 0, low: 0, slow: 0, good: 0 });
   const first = useRef(true);
   const levelKey = useStore((s) => s.room?.levelKey);
   useEffect(() => { first.current = true; }, [levelKey]);
@@ -63,17 +66,28 @@ function Driver({ spectator }: { spectator: boolean }) {
       first.current = false;
     }
 
-    // FPS를 재서 느린 기기에서는 화질을 한 단계씩 낮춘다
+    // ---- 60fps 유지: 프레임 시간을 재서 해상도를 조금씩 조절한다 ----
+    // 해상도(dpr)는 캔버스를 다시 만들지 않고 바꿀 수 있어 끊김이 없다. 그래도 느리면 화질 단계를 내린다.
     const f = fps.current;
     f.frames++; f.t += dt;
-    if (f.t >= 2.5) {
-      const v = f.frames / f.t;
+    if (dt > 0.021) f.slow++; // 60fps 기준 한 프레임(16.7ms)을 넘긴 횟수
+    if (f.t >= 1) {
+      const v = f.frames / f.t, slowRatio = f.slow / f.frames;
       (window as any).__cp40fps = v;
-      f.frames = 0; f.t = 0;
+      (window as any).__cp40perf = { fps: v, dpr: state.viewport.dpr, calls: state.gl.info.render.calls, tris: state.gl.info.render.triangles };
+      f.frames = 0; f.t = 0; f.slow = 0;
       const st = useStore.getState();
-      if (st.autoQuality && document.visibilityState === 'visible') {
-        f.low = v < 26 ? f.low + 1 : 0;
-        if (f.low >= 2 && st.quality !== 'low') { setQuality(st.quality === 'high' ? 'medium' : 'low', false); f.low = 0; }
+      if (document.visibilityState === 'visible') {
+        const dpr = state.viewport.dpr, max = maxDpr(st.quality), min = Math.min(max, 0.75);
+        if (v < 55 || slowRatio > 0.25) {
+          f.good = 0;
+          if (dpr > min + 0.01) state.setDpr(Math.max(min, dpr * (v < 40 ? 0.8 : 0.9)));
+          else if (st.autoQuality && st.quality !== 'low' && ++f.low >= 3) { setQuality(st.quality === 'high' ? 'medium' : 'low', false); f.low = 0; }
+        } else {
+          f.low = 0;
+          // 4초 동안 안정적이면 해상도를 한 칸 되돌린다
+          if (++f.good >= 4 && dpr < max - 0.01) { state.setDpr(Math.min(max, dpr * 1.08)); f.good = 2; }
+        }
       }
     }
   });
@@ -122,7 +136,7 @@ export function Scene({ spectator = false }: { spectator?: boolean }) {
   const levelSeed = useStore((s) => s.room?.levelSeed);
   // 네트워크 쪽과 같은 맵 객체를 쓴다(화학 모드에서 정답이 밝혀지면 그 객체가 바뀐다)
   const level = useMemo(() => (levelId && net.level?.id === levelId ? net.level : levelId ? buildLevel(levelId, levelSeed ?? 0) : null), [levelKey]);
-  const dpr = quality === 'low' ? 1 : quality === 'medium' ? Math.min(1.5, window.devicePixelRatio) : Math.min(2, window.devicePixelRatio);
+  const dpr = maxDpr(quality);
   const sky = level?.sky ?? ['#aee6ff', '#ffe6f5'];
 
   return (
@@ -132,13 +146,13 @@ export function Scene({ spectator = false }: { spectator?: boolean }) {
         dpr={dpr}
         flat
         shadows={quality === 'high'}
-        gl={{ antialias: quality !== 'low', alpha: true, powerPreference: 'high-performance', stencil: false }}
+        gl={{ antialias: quality === 'high', alpha: true, powerPreference: 'high-performance', stencil: false }}
         camera={{ fov: 62, near: 0.3, far: 220, position: [0, 8, -12] }}
       >
         <fog attach="fog" args={[sky[1], 70, 210]} />
-        <hemisphereLight args={['#ffffff', '#ffb3de', quality === 'low' ? 1.4 : 1.55]} />
+        <hemisphereLight args={['#ffffff', '#ffb3de', quality === 'high' ? 1.55 : 1.4]} />
         {/* 뒤에서 비추는 푸른 보조광: 캐릭터와 발판 가장자리가 또렷해진다 */}
-        <directionalLight position={[-8, 6, 14]} intensity={quality === 'low' ? 0.5 : 1.1} color="#9fd0ff" />
+        <directionalLight position={[-8, 6, 14]} intensity={quality === 'high' ? 1.1 : 0.5} color="#9fd0ff" />
         <Sun shadows={quality === 'high'} />
         <ContextWatch />
         <Driver spectator={spectator} />

@@ -1,7 +1,7 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import { io, type Socket } from 'socket.io-client';
 import {
-  DT, FLAG_HIDDEN, NO_INPUT, SimWorld, TICK_RATE, buildLevel, decodeSnapshot, newPlayerState, unpackState,
+  DT, FLAG_HIDDEN, NO_INPUT, SNAPSHOT_EVERY, SimWorld, TICK_RATE, buildLevel, decodeSnapshot, newPlayerState, unpackState,
   type CollectState, type CreateRes, type HostCmd, type JoinRes, type LevelDef, type PlayerInput, type PlayerState, type RoomConfig,
   type GameStateMsg, type PersonalMsg, type RoomState, type SelfMsg, type SnapPlayer,
 } from '@shared';
@@ -17,8 +17,8 @@ export interface RenderPlayer {
 interface Snap { tick: number; players: Map<number, SnapPlayer> }
 interface Pending { seq: number; input: PlayerInput; canMove: boolean }
 
-const INTERP_DELAY = 3.2; // 틱. 스냅샷 간격(2틱)보다 조금 길게 잡아 끊김을 줄인다
-const MAX_PENDING = 45;
+const INTERP_DELAY = (SNAPSHOT_EVERY + 2) * 1.0; // 틱. 스냅샷 간격보다 조금 길게(약 83ms) 잡아 끊김을 줄인다
+const MAX_PENDING = Math.round(1.5 * TICK_RATE);
 
 // 물리 엔진(약 2MB)은 입장할 때 내려받는다. 첫 화면이 빨리 뜨도록 미리 묶지 않는다.
 let RAPIER: typeof RAPIER_NS;
@@ -59,6 +59,7 @@ class GameNet {
   stats = { corrections: 0, lastError: 0, pending: 0 };
 
   private out: RenderPlayer[] = [];
+  private outDirty = true;
 
   connect(): Socket {
     if (this.socket) return this.socket;
@@ -214,6 +215,7 @@ class GameNet {
   }
 
   private onSnapshot(buf: ArrayBuffer) {
+    this.outDirty = true;
     const { tick, players } = decodeSnapshot(buf);
     const map = new Map<number, SnapPlayer>();
     for (const p of players) map.set(p.id, p);
@@ -222,9 +224,9 @@ class GameNet {
     // 시계 동기화: 가장 빨리 도착한 패킷(지연이 가장 작은 것)을 기준으로 삼는다
     const sample = tick - (performance.now() / 1000) * TICK_RATE;
     this.offsetSamples.push(sample);
-    if (this.offsetSamples.length > 45) this.offsetSamples.shift();
+    if (this.offsetSamples.length > 60) this.offsetSamples.shift();
     const best = Math.max(...this.offsetSamples);
-    this.tickOffset = this.tickOffset === -Infinity || Math.abs(best - this.tickOffset) > 15 ? best : this.tickOffset + (best - this.tickOffset) * 0.1;
+    this.tickOffset = this.tickOffset === -Infinity || Math.abs(best - this.tickOffset) > TICK_RATE / 2 ? best : this.tickOffset + (best - this.tickOffset) * 0.1;
   }
 
   private onSelf(m: SelfMsg) {
@@ -287,6 +289,7 @@ class GameNet {
 
   /** 렌더 프레임마다 호출: 고정 30Hz로 입력을 보내고 내 캐릭터를 예측 이동한다. */
   update(now: number) {
+    this.outDirty = true;
     const dt = Math.min(0.25, this.lastFrame ? (now - this.lastFrame) / 1000 : 0);
     this.lastFrame = now;
     const k = Math.min(1, dt * 12);
@@ -309,7 +312,7 @@ class GameNet {
     const target = playing ? this.predTick + this.acc / DT : this.serverTick() - this.levelTick;
     this.obstacleTick += dt * TICK_RATE;
     const d = target - this.obstacleTick;
-    if (Math.abs(d) > 6) this.obstacleTick = target; else this.obstacleTick += d * Math.min(1, dt * 4);
+    if (Math.abs(d) > TICK_RATE / 5) this.obstacleTick = target; else this.obstacleTick += d * Math.min(1, dt * 4);
   }
 
   private fixedStep() {
@@ -341,6 +344,9 @@ class GameNet {
 
   /** 그릴 플레이어 목록. 호출할 때마다 같은 배열을 재사용한다. */
   renderPlayers(): RenderPlayer[] {
+    // 한 프레임에 여러 곳(카메라, 캐릭터, HUD)에서 부르므로 처음 한 번만 계산한다
+    if (!this.outDirty) return this.out;
+    this.outDirty = false;
     const out = this.out;
     let n = 0;
     const myId = useStore.getState().myId;

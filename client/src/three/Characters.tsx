@@ -261,10 +261,11 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
 
   const shadow = quality === 'high';
   const low = quality === 'low';
+  const cheap = quality !== 'high'; // 보통 이하에서는 계산이 가벼운 재질을 쓴다
   return (
     <group>
       <instancedMesh ref={bodies} args={[sphere, undefined, N]} frustumCulled={false} castShadow={shadow}>
-        {low ? <meshLambertMaterial /> : <meshStandardMaterial roughness={0.42} metalness={0} />}
+        {cheap ? <meshLambertMaterial /> : <meshStandardMaterial roughness={0.42} metalness={0} />}
       </instancedMesh>
       {!low && (
         <instancedMesh ref={outlines} args={[sphere, undefined, N]} frustumCulled={false}>
@@ -272,7 +273,7 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
         </instancedMesh>
       )}
       <instancedMesh ref={limbs} args={[small, undefined, N * LIMBS]} frustumCulled={false} castShadow={shadow}>
-        {low ? <meshLambertMaterial /> : <meshStandardMaterial roughness={0.5} metalness={0} />}
+        {cheap ? <meshLambertMaterial /> : <meshStandardMaterial roughness={0.5} metalness={0} />}
       </instancedMesh>
       <instancedMesh ref={whites} args={[small, undefined, N * 4]} frustumCulled={false}>
         <meshBasicMaterial color="#ffffff" />

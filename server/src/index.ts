@@ -136,7 +136,7 @@ const stepMs = DT * 1000;
 let next = performance.now() + stepMs;
 function loop() {
   const now = performance.now();
-  if (now - next > 10) metrics.lateTicks++;
+  if (now - next > stepMs * 0.6) metrics.lateTicks++;
   let guard = 0;
   while (now >= next && guard++ < 5) {
     const t0 = performance.now();

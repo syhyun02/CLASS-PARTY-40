@@ -14,7 +14,9 @@ const sec = (s: number) => Math.round(s * TICK_RATE);
 const DRAW_TICKS = sec(6);
 const COUNTDOWN_TICKS = sec(COUNTDOWN_SEC);
 const RESULT_TICKS = sec(12);
-const MAX_QUEUE = 8;
+const MAX_QUEUE = Math.round(0.25 * TICK_RATE); // 입력을 최대 0.25초치까지 쌓아 둔다
+const STARVE_TICKS = Math.round(0.27 * TICK_RATE);
+const MAX_TOKENS = Math.round(0.13 * TICK_RATE);
 
 class Player implements GamePlayer {
   socket: Socket | null = null;
@@ -344,9 +346,9 @@ export class Room {
     for (const p of this.players.values()) {
       if (!p.connected || !p.active || p.out) continue;
       // 입력 한 개 = 물리 한 걸음. 클라이언트 예측과 걸음 수가 정확히 맞아야 보정이 줄어든다.
-      // 토큰 버킷으로 틱당 평균 1개(순간 최대 4개)만 허용해 입력을 몰아 보내는 속도 조작을 막는다.
+      // 토큰 버킷으로 틱당 평균 1개(순간 최대 0.13초치)만 허용해 입력을 몰아 보내는 속도 조작을 막는다.
       const can = this.canMove(p);
-      p.tokens = Math.min(4, p.tokens + 1);
+      p.tokens = Math.min(MAX_TOKENS, p.tokens + 1);
       let stepped = false;
       while (p.tokens >= 1 && p.queue.length > 0) {
         const m = p.queue.shift()!;
@@ -360,7 +362,7 @@ export class Room {
         stepped = true;
       }
       if (stepped) p.starve = 0;
-      else if (++p.starve > 8) {
+      else if (++p.starve > STARVE_TICKS) {
         // 입력이 0.3초 넘게 끊기면 조작 없이 물리만 진행한다(공중에 멈춰 있지 않게)
         p.input.mx = 0; p.input.mz = 0; p.input.jump = false; p.input.action = false;
         sim.stepPlayer(p.state, p.input, p.id, can);
@@ -388,7 +390,7 @@ export class Room {
     }
     this.flush();
     // 게임별 상태는 바뀌었을 때만, 최대 초당 10번 보낸다
-    if (this.gameDirty && this.tick % 3 === 0) {
+    if (this.gameDirty && this.tick % Math.round(TICK_RATE / 10) === 0) {
       this.gameDirty = false;
       this.io.to(this.channel).emit('g', { key: this.levelKey, state: this.gameState });
     }
@@ -411,7 +413,7 @@ export class Room {
         const d = Math.sqrt(d2);
         // 완전히 겹치면 자리 번호로 방향을 정해 흩어 놓는다
         const nx = d > 1e-4 ? dx / d : Math.cos(i * 2.4), nz = d > 1e-4 ? dz / d : Math.sin(i * 2.4);
-        const push = Math.min(0.12, (min - d) * 0.5);
+        const push = Math.min(3.6 / TICK_RATE, (min - d) * 0.5); // 초당 최대 3.6m로 밀어낸다
         this.sim.nudge(a, -nx * push, -nz * push);
         this.sim.nudge(b, nx * push, nz * push);
       }
@@ -428,7 +430,7 @@ export class Room {
       if (p.done) flags |= FLAG_DONE;
       if (!p.connected || !p.active || p.out) flags |= FLAG_HIDDEN;
       if (Math.abs(s.vx) + Math.abs(s.vz) > 0.5) flags |= FLAG_MOVING;
-      if (this.tick - p.pushAt < 9) flags |= FLAG_ACT;
+      if (this.tick - p.pushAt < TICK_RATE * 0.3) flags |= FLAG_ACT;
       snap.push({ id: p.id, x: s.x, y: s.y, z: s.z, yaw: s.yaw, flags });
     }
     const buf = Buffer.from(encodeSnapshot(this.tick, snap));

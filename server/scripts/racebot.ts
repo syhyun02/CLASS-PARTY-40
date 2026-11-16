@@ -4,7 +4,7 @@
  *   npx tsx scripts/racebot.ts --url http://localhost:3001
  */
 import { io, type Socket } from 'socket.io-client';
-import { DT, buildLevel, moverOffset, sweeperAngle, unpackState, newPlayerState, type CreateRes, type JoinRes, type LevelDef, type PlayerState, type RoomState, type SelfMsg } from '@shared';
+import { DT, TICK_RATE, buildLevel, moverOffset, sweeperAngle, unpackState, newPlayerState, type CreateRes, type JoinRes, type LevelDef, type PlayerState, type RoomState, type SelfMsg } from '@shared';
 
 const i0 = process.argv.indexOf('--url');
 const URL = i0 >= 0 ? process.argv[i0 + 1] : 'http://localhost:3001';
@@ -86,7 +86,7 @@ function decide(b: Bot): [number, number, number] {
 const timer = setInterval(() => {
   if (room && room.levelKey !== levelKey) { levelKey = room.levelKey; level = buildLevel(room.levelId, room.levelSeed); }
   for (const b of bots) { if (!b.s) { b.socket.emit('in', [++b.seq, 0, 0, 0]); continue; } const [mx, mz, j] = decide(b); b.socket.emit('in', [++b.seq, mx, mz, j]); }
-}, 1000 / 30);
+}, 1000 / TICK_RATE);
 
 await sleep(1000);
 host.emit('host:cmd', { type: 'start' });
