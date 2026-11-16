@@ -1,0 +1,156 @@
+import { useState } from 'react';
+import { GAMES, PLAYER_COLORS, type GameMode } from '@shared';
+import { net } from '../game/net';
+import { useStore } from '../game/store';
+import { Blob } from './Overlays';
+
+const MODES: { id: GameMode; title: string; sub: string; emoji: string; ready: boolean }[] = [
+  { id: 'play', title: '순수 놀이 모드', sub: '달리고 점프하고 피하는 3D 파티 게임', emoji: '🎈', ready: true },
+  { id: 'chem', title: '물질과 에너지 3·4단원', sub: '화학 변화의 자발성 · 반응 속도', emoji: '⚗️', ready: false },
+];
+
+function Shell({ children, back }: { children: React.ReactNode; back?: () => void }) {
+  return (
+    <div className="party-bg flex min-h-full flex-col items-center justify-center gap-4 p-4">
+      {back && <button className="chip absolute left-3 top-3" onClick={back}>← 처음으로</button>}
+      {children}
+    </div>
+  );
+}
+
+export function Home() {
+  const set = useStore((s) => s.set);
+  const notice = useStore((s) => s.notice);
+  return (
+    <Shell>
+      <div className="text-center">
+        <div className="flex justify-center gap-2">
+          {PLAYER_COLORS.slice(0, 6).map((c, i) => (
+            <span key={c} className="animate-floaty" style={{ animationDelay: `${i * 0.25}s` }}><Blob color={c} size={34} /></span>
+          ))}
+        </div>
+        <h1 className="mt-2 font-display text-5xl text-white title-stroke sm:text-7xl">CLASS PARTY <span className="text-lemon">40</span></h1>
+        <p className="mt-1 font-display text-lg text-ink/80">우리 반 40명이 한 경기장에서 겨루는 3D 파티 게임</p>
+      </div>
+      {notice && <div className="card !bg-lemon !py-2 font-display">{notice}</div>}
+      <div className="grid w-full max-w-2xl gap-3 sm:grid-cols-2">
+        <button className="card flex flex-col items-center gap-1 text-center transition active:translate-y-1" onClick={() => set({ screen: 'join', notice: null })}>
+          <div className="text-5xl">🙋</div>
+          <div className="font-display text-2xl">학생 입장</div>
+          <div className="opacity-70">입장 코드로 들어가요</div>
+        </button>
+        <button className="card flex flex-col items-center gap-1 text-center transition active:translate-y-1" onClick={() => set({ screen: 'hostSetup', notice: null })}>
+          <div className="text-5xl">🧑‍🏫</div>
+          <div className="font-display text-2xl">교사: 방 만들기</div>
+          <div className="opacity-70">게임을 고르고 진행해요</div>
+        </button>
+      </div>
+      <div className="flex flex-wrap justify-center gap-2">
+        {MODES.map((m) => (
+          <div key={m.id} className="chip !text-base">{m.emoji} {m.title}{!m.ready && <span className="ml-1 opacity-60">(준비 중)</span>}</div>
+        ))}
+      </div>
+    </Shell>
+  );
+}
+
+export function HostSetup() {
+  const set = useStore((s) => s.set);
+  const [mode, setMode] = useState<GameMode>('play');
+  const [rounds, setRounds] = useState(10);
+  const [games, setGames] = useState<string[]>(GAMES.filter((g) => g.implemented).map((g) => g.id));
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const create = async () => {
+    setBusy(true);
+    const e = await net.createRoom({ mode, rounds, games });
+    setBusy(false);
+    if (e) setErr(e);
+  };
+  return (
+    <Shell back={() => set({ screen: 'home' })}>
+      <div className="card flex w-full max-w-3xl flex-col gap-4">
+        <h2 className="font-display text-3xl">방 만들기</h2>
+        <section>
+          <div className="mb-2 font-display text-lg">1. 게임 모드</div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {MODES.map((m) => (
+              <button key={m.id} disabled={!m.ready} onClick={() => setMode(m.id)}
+                className={`rounded-2xl border-4 p-3 text-left transition disabled:opacity-50 ${mode === m.id ? 'border-grape bg-grape/10' : 'border-ink/10 bg-white'}`}>
+                <div className="font-display text-xl">{m.emoji} {m.title}</div>
+                <div className="text-sm opacity-70">{m.sub}</div>
+                {!m.ready && <div className="mt-1 inline-block rounded-full bg-lemon px-2 text-sm font-display">3단계에서 추가돼요</div>}
+              </button>
+            ))}
+          </div>
+        </section>
+        <section>
+          <div className="mb-2 font-display text-lg">2. 미니게임 구성 <span className="text-sm opacity-60">(추첨에 넣을 게임)</span></div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            {GAMES.map((g) => {
+              const on = games.includes(g.id);
+              return (
+                <button key={g.id} disabled={!g.implemented}
+                  onClick={() => setGames(on ? games.filter((x) => x !== g.id) : [...games, g.id])}
+                  className={`rounded-2xl border-4 p-2 text-center disabled:opacity-45 ${on ? 'border-mint bg-mint/20' : 'border-ink/10 bg-white'}`}>
+                  <div className="text-2xl">{g.emoji}</div>
+                  <div className="font-display text-sm leading-tight">{g.name}</div>
+                  {!g.implemented && <div className="text-xs opacity-70">2단계 예정</div>}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+        <section className="flex flex-wrap items-center gap-3">
+          <div className="font-display text-lg">3. 라운드 수</div>
+          <button className="btn-ghost !px-4 !py-1" onClick={() => setRounds(Math.max(1, rounds - 1))}>−</button>
+          <div className="w-10 text-center font-display text-2xl tabular-nums">{rounds}</div>
+          <button className="btn-ghost !px-4 !py-1" onClick={() => setRounds(Math.min(20, rounds + 1))}>＋</button>
+        </section>
+        {err && <div className="rounded-2xl bg-bubble/20 p-2 font-display text-bubble">{err}</div>}
+        <button className="btn-grape text-2xl" disabled={busy || games.length === 0} onClick={create}>{busy ? '만드는 중…' : '방 만들기'}</button>
+      </div>
+    </Shell>
+  );
+}
+
+export function Join({ initialCode }: { initialCode: string }) {
+  const set = useStore((s) => s.set);
+  const [code, setCode] = useState(initialCode);
+  const [name, setName] = useState(() => { try { return localStorage.getItem('cp40:name') ?? ''; } catch { return ''; } });
+  const [color, setColor] = useState<string>(() => PLAYER_COLORS[Math.floor(Math.random() * PLAYER_COLORS.length)]);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const ok = code.length === 6 && name.trim().length > 0;
+  const go = async () => {
+    if (!ok || busy) return;
+    setBusy(true);
+    try { localStorage.setItem('cp40:name', name.trim()); } catch { /* 무시 */ }
+    const e = await net.join(code, name.trim(), color);
+    setBusy(false);
+    if (e) setErr(e);
+  };
+  return (
+    <Shell back={() => set({ screen: 'home' })}>
+      <form className="card flex w-full max-w-md flex-col gap-3" onSubmit={(e) => { e.preventDefault(); go(); }}>
+        <h2 className="font-display text-3xl">입장하기</h2>
+        <label className="font-display" htmlFor="code">입장 코드 6자리</label>
+        <input id="code" className="field text-center text-3xl tracking-[0.3em]" inputMode="numeric" autoComplete="off" placeholder="000000"
+          value={code} onChange={(e) => { setCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setErr(null); }} />
+        <label className="font-display" htmlFor="name">닉네임</label>
+        <input id="name" className="field" maxLength={10} autoComplete="off" placeholder="최대 10글자" value={name} onChange={(e) => setName(e.target.value)} />
+        <div className="font-display">캐릭터 색</div>
+        <div className="flex flex-wrap gap-2">
+          {PLAYER_COLORS.map((c) => (
+            <button type="button" key={c} onClick={() => setColor(c)} aria-label={`색 ${c}`}
+              className={`rounded-full p-1 transition ${color === c ? 'scale-110 bg-ink/20 ring-4 ring-grape' : ''}`}>
+              <Blob color={c} size={30} />
+            </button>
+          ))}
+        </div>
+        {err && <div className="rounded-2xl bg-bubble/20 p-2 font-display text-bubble">{err}</div>}
+        <button className="btn-bubble text-2xl" disabled={!ok || busy}>{busy ? '들어가는 중…' : '입장!'}</button>
+      </form>
+    </Shell>
+  );
+}

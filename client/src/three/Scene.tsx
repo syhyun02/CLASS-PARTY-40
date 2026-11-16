@@ -1,0 +1,155 @@
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { useEffect, useMemo, useRef } from 'react';
+import * as THREE from 'three';
+import { buildLevel } from '@shared';
+import { input } from '../game/input';
+import { net } from '../game/net';
+import { setQuality, useStore } from '../game/store';
+import { Characters } from './Characters';
+import { LevelView } from './LevelView';
+
+const target = new THREE.Vector3();
+const want = new THREE.Vector3();
+
+/** 네트워크·예측 갱신, 카메라, 자동 화질 조절을 한 프레임에 처리한다. */
+function Driver({ spectator }: { spectator: boolean }) {
+  const camera = useThree((s) => s.camera);
+  const fps = useRef({ frames: 0, t: 0, low: 0 });
+  const first = useRef(true);
+  const levelKey = useStore((s) => s.room?.levelKey);
+  useEffect(() => { first.current = true; }, [levelKey]);
+
+  useFrame((state, dt) => {
+    net.update(performance.now());
+    const list = net.renderPlayers();
+    const me = list.find((p) => p.isMe);
+    const snap = first.current;
+
+    if (me && !spectator) {
+      // 3인칭: 캐릭터 뒤 위쪽에서 따라간다
+      const dist = 7.2, cy = input.camYaw, cp = input.camPitch;
+      target.set(me.x, me.y + 1.3, me.z);
+      want.set(me.x - Math.sin(cy) * Math.cos(cp) * dist, me.y + 1.3 + Math.sin(cp) * dist, me.z - Math.cos(cy) * Math.cos(cp) * dist);
+      camera.position.lerp(want, snap ? 1 : Math.min(1, dt * 10));
+      camera.lookAt(target);
+      first.current = false;
+    } else if (list.length > 0) {
+      // 관전(교사 화면, 늦게 들어온 학생): 선두 무리를 위에서 비춘다
+      let sx = 0, sz = 0, sy = 0, n = 0;
+      const sorted = [...list].sort((a, b) => b.z - a.z).slice(0, Math.max(3, Math.ceil(list.length / 3)));
+      for (const p of sorted) { sx += p.x; sy += p.y; sz += p.z; n++; }
+      const lobby = net.level?.id === 'lobby';
+      target.set(lobby ? 0 : sx / n * 0.4, lobby ? 0 : sy / n, lobby ? 0 : sz / n);
+      const a = lobby ? state.clock.elapsedTime * 0.08 : 0;
+      want.set(target.x + Math.sin(a) * 24, target.y + (lobby ? 17 : 14), target.z - Math.cos(a) * (lobby ? 24 : 17));
+      camera.position.lerp(want, snap ? 1 : Math.min(1, dt * 2.5));
+      camera.lookAt(target);
+      first.current = false;
+    }
+
+    // FPS를 재서 느린 기기에서는 화질을 한 단계씩 낮춘다
+    const f = fps.current;
+    f.frames++; f.t += dt;
+    if (f.t >= 2.5) {
+      const v = f.frames / f.t;
+      (window as any).__cp40fps = v;
+      f.frames = 0; f.t = 0;
+      const st = useStore.getState();
+      if (st.autoQuality && document.visibilityState === 'visible') {
+        f.low = v < 26 ? f.low + 1 : 0;
+        if (f.low >= 2 && st.quality !== 'low') { setQuality(st.quality === 'high' ? 'medium' : 'low', false); f.low = 0; }
+      }
+    }
+  });
+  return null;
+}
+
+/** 햇빛. 그림자 범위가 좁아도 되도록 카메라가 보는 곳을 따라다닌다. */
+function Sun({ shadows }: { shadows: boolean }) {
+  const ref = useRef<THREE.DirectionalLight>(null!);
+  const camera = useThree((s) => s.camera);
+  const fwd = useMemo(() => new THREE.Vector3(), []);
+  useFrame(() => {
+    camera.getWorldDirection(fwd);
+    const l = ref.current;
+    l.target.position.set(camera.position.x + fwd.x * 10, camera.position.y - 5, camera.position.z + fwd.z * 10);
+    l.position.set(l.target.position.x + 12, l.target.position.y + 26, l.target.position.z - 9);
+    l.target.updateMatrixWorld();
+  });
+  return (
+    <directionalLight
+      ref={ref} intensity={1.5} castShadow={shadows}
+      shadow-mapSize={[1024, 1024]} shadow-camera-left={-22} shadow-camera-right={22}
+      shadow-camera-top={22} shadow-camera-bottom={-22} shadow-camera-far={70} shadow-bias={-0.0015}
+    />
+  );
+}
+
+function Clouds() {
+  const ref = useRef<THREE.InstancedMesh>(null!);
+  const geo = useMemo(() => new THREE.SphereGeometry(1, 8, 6), []);
+  useEffect(() => {
+    const d = new THREE.Object3D();
+    let i = 0;
+    for (let c = 0; c < 10; c++) {
+      const x = ((c * 37) % 90) - 45, z = c * 18 - 20, y = -8 + ((c * 13) % 9);
+      for (let k = 0; k < 3; k++) {
+        d.position.set(x + (x > 0 ? 18 : -18) + k * 2.6, y + (k === 1 ? 0.8 : 0), z);
+        d.scale.set(2.6 + (k === 1 ? 0.9 : 0), 1.7 + (k === 1 ? 0.6 : 0), 2.2);
+        d.updateMatrix();
+        ref.current.setMatrixAt(i++, d.matrix);
+      }
+    }
+    ref.current.instanceMatrix.needsUpdate = true;
+  }, []);
+  return (
+    <instancedMesh ref={ref} args={[geo, undefined, 30]} frustumCulled={false}>
+      <meshBasicMaterial color="#ffffff" transparent opacity={0.85} />
+    </instancedMesh>
+  );
+}
+
+function ContextWatch() {
+  const gl = useThree((s) => s.gl);
+  useEffect(() => {
+    const el = gl.domElement;
+    const lost = (e: Event) => { e.preventDefault(); useStore.setState({ contextLost: true }); };
+    const back = () => useStore.setState({ contextLost: false });
+    el.addEventListener('webglcontextlost', lost);
+    el.addEventListener('webglcontextrestored', back);
+    return () => { el.removeEventListener('webglcontextlost', lost); el.removeEventListener('webglcontextrestored', back); };
+  }, [gl]);
+  return null;
+}
+
+export function Scene({ spectator = false }: { spectator?: boolean }) {
+  const quality = useStore((s) => s.quality);
+  const levelKey = useStore((s) => s.room?.levelKey);
+  const levelId = useStore((s) => s.room?.levelId);
+  const levelSeed = useStore((s) => s.room?.levelSeed);
+  const level = useMemo(() => (levelId ? buildLevel(levelId, levelSeed ?? 0) : null), [levelKey]);
+  const dpr = quality === 'low' ? 1 : quality === 'medium' ? Math.min(1.5, window.devicePixelRatio) : Math.min(2, window.devicePixelRatio);
+  const sky = level?.sky ?? ['#aee6ff', '#ffe6f5'];
+
+  return (
+    <div className="absolute inset-0" style={{ background: `linear-gradient(180deg, ${sky[0]} 0%, ${sky[1]} 70%)` }}>
+      <Canvas
+        key={quality}
+        dpr={dpr}
+        flat
+        shadows={quality === 'high'}
+        gl={{ antialias: quality !== 'low', alpha: true, powerPreference: 'high-performance', stencil: false }}
+        camera={{ fov: 62, near: 0.3, far: 220, position: [0, 8, -12] }}
+      >
+        <fog attach="fog" args={[sky[1], 55, 170]} />
+        <hemisphereLight args={['#ffffff', '#b9a8e8', 1.25]} />
+        <Sun shadows={quality === 'high'} />
+        <ContextWatch />
+        <Driver spectator={spectator} />
+        <Clouds />
+        {level && <LevelView key={levelKey} level={level} />}
+        <Characters nameRange={spectator ? 60 : 22} />
+      </Canvas>
+    </div>
+  );
+}

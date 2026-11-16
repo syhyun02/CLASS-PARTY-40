@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  font-family: 'Gowun Dodum', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+  color: #3b2f63;
+  background: #cfeaff;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+}
+input { -webkit-user-select: text; user-select: text; }
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3 font-display text-lg text-white shadow-pop transition active:translate-y-1 active:shadow-none disabled:opacity-40 disabled:active:translate-y-0 disabled:active:shadow-pop;
+  }
+  .btn-grape { @apply btn bg-grape; }
+  .btn-bubble { @apply btn bg-bubble; }
+  .btn-mint { @apply btn bg-mint text-ink; }
+  .btn-lemon { @apply btn bg-lemon text-ink; }
+  .btn-ghost { @apply btn bg-white text-ink; }
+  .card { @apply rounded-3xl bg-white/90 p-5 shadow-pop backdrop-blur; }
+  .chip { @apply rounded-full bg-white/85 px-3 py-1 font-display text-sm text-ink shadow-popsm; }
+  .field { @apply w-full rounded-2xl border-4 border-ink/10 bg-white px-4 py-3 font-display text-xl text-ink outline-none focus:border-grape; }
+  .title-stroke { text-shadow: 0 3px 0 rgba(59,47,99,.25); }
+}
+
+.party-bg {
+  background:
+    radial-gradient(circle at 12% 18%, #ffd6ec 0 12%, transparent 13%),
+    radial-gradient(circle at 88% 12%, #fff3b0 0 9%, transparent 10%),
+    radial-gradient(circle at 80% 85%, #c9f5e6 0 14%, transparent 15%),
+    radial-gradient(circle at 15% 88%, #d9d0ff 0 10%, transparent 11%),
+    linear-gradient(160deg, #aee1ff, #ffe3f3);
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; }
+}

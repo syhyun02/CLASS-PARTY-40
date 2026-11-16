@@ -1,0 +1,5 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": { "types": ["node"], "baseUrl": "..", "lib": ["ES2022"] },
+  "include": ["src", "scripts", "../shared/src"]
+}

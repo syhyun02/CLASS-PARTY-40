@@ -1,0 +1,226 @@
+import { useEffect, useMemo, useState } from 'react';
+import { GAMES, getGame, type RoomState, type RoundRow } from '@shared';
+import { net } from '../game/net';
+import { setQuality, useStore, type Quality } from '../game/store';
+import { useSecondsLeft, useTicker } from './hooks';
+
+export function Blob({ color, size = 28 }: { color: string; size?: number }) {
+  return (
+    <span className="relative inline-block shrink-0 rounded-full shadow-popsm" style={{ width: size, height: size * 1.1, background: color }}>
+      <span className="absolute rounded-full bg-white" style={{ width: size * 0.22, height: size * 0.26, left: size * 0.2, top: size * 0.28 }} />
+      <span className="absolute rounded-full bg-white" style={{ width: size * 0.22, height: size * 0.26, right: size * 0.2, top: size * 0.28 }} />
+    </span>
+  );
+}
+
+/** 랜덤 미니게임 추첨: 카드가 빠르게 돌아가다 뽑힌 게임에서 멈춘다. */
+export function DrawOverlay({ room }: { room: RoomState }) {
+  const left = useSecondsLeft(20);
+  const game = getGame(room.gameId ?? '')!;
+  const pool = useMemo(() => {
+    const ids = room.config.games.length > 1 ? room.config.games : GAMES.map((g) => g.id); // 한 종뿐이면 연출용으로 전체를 돌린다
+    return ids.map((id) => getGame(id)!).filter(Boolean);
+  }, [room.config.games]);
+  const spinning = left > 2.6;
+  const shown = spinning ? pool[Math.floor((6 - left) * (4 + (6 - left) * 2.2)) % pool.length] : game;
+  return (
+    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-grape/70 p-4 backdrop-blur-sm">
+      <div className="chip animate-rise">ROUND {room.round} / {room.config.rounds}</div>
+      <div className="font-display text-2xl text-white title-stroke">이번 게임은…</div>
+      <div key={spinning ? 'spin' : 'done'} className={`card flex w-[min(420px,86vw)] flex-col items-center gap-1 text-center ${spinning ? '' : 'animate-pop'}`}>
+        <div className={`text-6xl ${spinning ? 'animate-wiggle' : 'animate-floaty'}`}>{shown.emoji}</div>
+        <div className="font-display text-3xl">{shown.name}</div>
+        <div className={`text-base ${spinning ? 'opacity-0' : 'opacity-80'}`}>{game.howTo}</div>
+      </div>
+    </div>
+  );
+}
+
+export function CountdownOverlay({ room }: { room: RoomState }) {
+  const left = useSecondsLeft(20);
+  const n = Math.ceil(left - 1);
+  const game = getGame(room.gameId ?? '');
+  return (
+    <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2">
+      <div className="chip">{game?.emoji} {game?.name}</div>
+      <div key={n} className="animate-pop font-display text-[min(34vh,180px)] leading-none text-white" style={{ WebkitTextStroke: '6px #3b2f63', paintOrder: 'stroke fill' }}>
+        {n > 0 ? n : '출발!'}
+      </div>
+      <div className="chip">{game?.howTo}</div>
+    </div>
+  );
+}
+
+/** 경기 중 상단 정보: 남은 시간, 내 순위, 완주 인원, 진행 막대 */
+export function RaceHud({ room, myId }: { room: RoomState; myId: number | null }) {
+  useTicker(5);
+  const left = useSecondsLeft(4);
+  const players = net.renderPlayers();
+  const track = net.level?.track;
+  const done = room.players.filter((p) => p.place !== null);
+  const racers = room.players.filter((p) => p.active).length;
+  const mine = room.players.find((p) => p.id === myId);
+  const me = players.find((p) => p.id === myId);
+  // 실시간 순위: 완주자 수 + 나보다 앞선 사람 수
+  let rank = mine?.place ?? null;
+  if (rank === null && me) rank = done.length + 1 + players.filter((p) => p.id !== myId && p.z > me.z && !done.some((d) => d.id === p.id)).length;
+  const prog = (z: number) => (track ? Math.max(0, Math.min(1, (z - track.z0) / (track.z1 - track.z0))) : 0);
+  const lead = players.reduce((m, p) => Math.max(m, prog(p.z)), 0);
+  const urgent = left <= 20;
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-2 p-3" style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}>
+      <div className="chip tabular-nums">{rank !== null && myId !== null ? <><b className="text-xl text-bubble">{rank}</b>위 / {racers}명</> : `${racers}명 경기 중`}</div>
+      <div className="flex flex-1 flex-col items-center gap-1">
+        <div className={`chip tabular-nums text-lg ${urgent ? 'animate-wiggle !bg-bubble !text-white' : ''}`}>⏱ {Math.floor(left / 60)}:{String(Math.floor(left % 60)).padStart(2, '0')}</div>
+        {track && (
+          <div className="relative h-3 w-[min(46vw,360px)] rounded-full bg-white/70 shadow-popsm">
+            <div className="absolute inset-y-0 left-0 rounded-full bg-mint/70" style={{ width: `${lead * 100}%` }} />
+            {me && <div className="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white" style={{ left: `${prog(me.z) * 100}%`, background: mine?.color }} />}
+            <div className="absolute -right-1 -top-2 text-sm">🏁</div>
+          </div>
+        )}
+      </div>
+      <div className="chip tabular-nums">🏁 {done.length}명 완주</div>
+      {mine?.place != null && room.phase === 'playing' && (
+        <div className="absolute inset-x-0 top-24 flex justify-center">
+          <div className="card animate-pop px-6 py-3 text-center font-display text-2xl">🎉 {mine.place}위로 완주!</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Row({ r, me, showPoints }: { r: RoundRow; me: boolean; showPoints: boolean }) {
+  return (
+    <div className={`flex items-center gap-2 rounded-2xl px-3 py-1.5 ${me ? 'bg-lemon' : 'bg-white/80'}`}>
+      <div className="w-8 text-center font-display text-lg tabular-nums">{r.rank}</div>
+      <Blob color={r.color} size={22} />
+      <div className="min-w-0 flex-1 truncate font-display">{r.name}</div>
+      {showPoints && <div className="hidden text-sm opacity-70 sm:block">{r.detail}</div>}
+      {showPoints && <div className="w-12 text-right font-display text-bubble tabular-nums">+{r.points}</div>}
+      <div className="w-14 text-right font-display tabular-nums">{r.total}</div>
+    </div>
+  );
+}
+
+/** 누적 점수 순위(동점은 같은 순위) */
+export function standings(room: RoomState): RoundRow[] {
+  const sorted = [...room.players].sort((a, b) => b.score - a.score);
+  let rank = 0, prev = -1;
+  return sorted.map((p, i) => {
+    if (p.score !== prev) { rank = i + 1; prev = p.score; }
+    return { id: p.id, name: p.name, color: p.color, rank, points: 0, detail: '', total: p.score };
+  });
+}
+
+export function ResultOverlay({ room, myId }: { room: RoomState; myId: number | null }) {
+  const left = useSecondsLeft(4);
+  const [tab, setTab] = useState<'round' | 'total'>('round');
+  // 절반쯤 지나면 누적 순위로 넘어간다
+  useEffect(() => { if (left > 0 && left < 5.5) setTab('total'); }, [left < 5.5]);
+  const rows = tab === 'round' ? room.lastResult ?? [] : standings(room);
+  const top = rows.slice(0, 8);
+  const mine = rows.find((r) => r.id === myId);
+  const game = getGame(room.gameId ?? '');
+  return (
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-ink/45 p-3 backdrop-blur-sm">
+      <div className="card flex max-h-full w-[min(560px,96vw)] flex-col gap-2 overflow-hidden animate-pop">
+        <div className="flex items-center justify-between gap-2">
+          <div className="font-display text-xl">{tab === 'round' ? `${game?.emoji} ${room.round}라운드 결과` : '🏆 누적 순위'}</div>
+          <div className="flex gap-1">
+            <button className={`chip ${tab === 'round' ? '!bg-grape !text-white' : ''}`} onClick={() => setTab('round')}>이번 판</button>
+            <button className={`chip ${tab === 'total' ? '!bg-grape !text-white' : ''}`} onClick={() => setTab('total')}>누적</button>
+          </div>
+        </div>
+        <div className="flex flex-col gap-1 overflow-y-auto">
+          {top.map((r) => <Row key={r.id} r={r} me={r.id === myId} showPoints={tab === 'round'} />)}
+          {mine && !top.includes(mine) && <><div className="text-center leading-none opacity-50">⋮</div><Row r={mine} me showPoints={tab === 'round'} /></>}
+        </div>
+        <div className="text-center text-sm opacity-70">
+          {room.round >= room.config.rounds ? '곧 시상식이 시작돼요' : `다음 게임 추첨까지 ${Math.ceil(left)}초`}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 최종 시상식: 1~3위 시상대 + 전체 순위표 */
+export function FinalOverlay({ room, myId, children }: { room: RoomState; myId: number | null; children?: React.ReactNode }) {
+  const rows = standings(room);
+  const podium = [rows[1], rows[0], rows[2]];
+  const heights = ['h-20', 'h-28', 'h-14'];
+  const medals = ['🥈', '🥇', '🥉'];
+  const [open, setOpen] = useState(true);
+  if (!open) return <button className="btn-grape absolute left-1/2 top-3 z-20 -translate-x-1/2" onClick={() => setOpen(true)}>🏆 순위 보기</button>;
+  return (
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-grape/60 p-3 backdrop-blur-sm">
+      <div className="card flex max-h-full w-[min(760px,97vw)] flex-col gap-3 overflow-hidden">
+        <div className="text-center font-display text-3xl">🎊 최종 시상식 🎊</div>
+        <div className="flex min-h-0 flex-1 flex-col gap-3 sm:flex-row">
+          <div className="flex items-end justify-center gap-2 sm:w-1/2">
+            {podium.map((r, i) => r && (
+              <div key={r.id} className="flex w-24 flex-col items-center animate-rise" style={{ animationDelay: `${[0.5, 0.9, 0.1][i]}s` }}>
+                <div className="animate-floaty"><Blob color={r.color} size={i === 1 ? 54 : 42} /></div>
+                <div className="max-w-full truncate font-display">{r.name}</div>
+                <div className={`flex w-full flex-col items-center justify-start rounded-t-2xl bg-lemon pt-1 font-display shadow-popsm ${heights[i]}`}>
+                  <span className="text-2xl">{medals[i]}</span><span className="tabular-nums">{r.total}점</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+            {rows.map((r) => <Row key={r.id} r={r} me={r.id === myId} showPoints={false} />)}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          {children}
+          <button className="btn-ghost !py-2 !text-base" onClick={() => setOpen(false)}>대기실 구경하기</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function SettingsButton() {
+  const quality = useStore((s) => s.quality);
+  const [open, setOpen] = useState(false);
+  const label: Record<Quality, string> = { low: '낮음', medium: '보통', high: '높음' };
+  return (
+    <div className="absolute bottom-3 left-1/2 z-30 -translate-x-1/2 sm:bottom-auto sm:left-auto sm:right-3 sm:top-14 sm:translate-x-0">
+      <button className="chip" onClick={() => setOpen(!open)} aria-label="그래픽 설정">⚙ 화질 {label[quality]}</button>
+      {open && (
+        <div className="card absolute bottom-10 left-1/2 flex -translate-x-1/2 gap-2 !p-3 sm:bottom-auto sm:left-auto sm:right-0 sm:top-10 sm:translate-x-0">
+          {(['low', 'medium', 'high'] as Quality[]).map((q) => (
+            <button key={q} className={`chip whitespace-nowrap ${q === quality ? '!bg-grape !text-white' : ''}`} onClick={() => { setQuality(q); setOpen(false); }}>{label[q]}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 연결 끊김·일시정지·그래픽 중단 안내 */
+export function StatusOverlays({ room }: { room: RoomState | null }) {
+  const online = useStore((s) => s.online);
+  const lost = useStore((s) => s.contextLost);
+  if (lost) return (
+    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-ink/80 p-6 text-center text-white">
+      <div className="font-display text-2xl">그래픽이 잠시 멈췄어요</div>
+      <div>다시 불러오면 같은 자리로 돌아갑니다.</div>
+      <button className="btn-bubble" onClick={() => location.reload()}>다시 불러오기</button>
+    </div>
+  );
+  if (!online) return (
+    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-2 bg-ink/70 text-white">
+      <div className="animate-floaty text-5xl">📡</div>
+      <div className="font-display text-2xl">다시 연결하는 중…</div>
+      <div className="opacity-80">점수와 자리는 그대로 남아 있어요</div>
+    </div>
+  );
+  if (room?.paused) return (
+    <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-ink/50">
+      <div className="card font-display text-3xl">⏸ 잠깐 멈춤</div>
+    </div>
+  );
+  return null;
+}
