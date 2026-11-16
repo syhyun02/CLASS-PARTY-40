@@ -3,7 +3,7 @@ import {
   AIR_ACCEL, COYOTE_TICKS, DT, GRAVITY, GROUND_ACCEL, JUMP_BUFFER_TICKS, JUMP_VELOCITY,
   MOVE_SPEED, PLAYER_CENTER_Y, PLAYER_HALF_HEIGHT, PLAYER_RADIUS, STUN_TICKS,
 } from './constants';
-import { inBox, moverOffset, spawnPoint, sweeperAngle, type LevelDef } from './level';
+import { inBox, moverOffset, spawnPoint, sweeperAngle, sweeperSpeed, type LevelDef } from './level';
 
 type Rapier = typeof RAPIER_NS;
 
@@ -42,7 +42,8 @@ export function unpackState(a: number[], out: PlayerState): PlayerState {
 
 export function newPlayerState(level: LevelDef, slot: number, cp = 0): PlayerState {
   const [x, y, z] = spawnPoint(level, cp, slot);
-  return { x, y, z, vx: 0, vy: 0, vz: 0, yaw: 0, grounded: 1, stun: 0, coyote: 0, jumpBuf: 0, jumpHeld: 0, mover: -1, cp, falls: 0 };
+  const yaw = level.spawnRing ? Math.atan2(-x, -z) : 0; // 원형 출발이면 가운데를 바라본다
+  return { x, y, z, vx: 0, vy: 0, vz: 0, yaw, grounded: 1, stun: 0, coyote: 0, jumpBuf: 0, jumpHeld: 0, mover: -1, cp, falls: 0 };
 }
 
 const G_LEVEL = 0x0001;
@@ -63,6 +64,8 @@ export class SimWorld {
   /** 현재 틱과 직전 틱의 발판 위치 차이 */
   private moverDelta: [number, number, number][] = [];
   private moverPos: [number, number, number][] = [];
+  private tileCols: RAPIER_NS.Collider[] = [];
+  private tileOn: boolean[] = [];
   private time = 0;
   private tick = -1;
 
@@ -83,6 +86,11 @@ export class SimWorld {
       this.moverDelta.push([0, 0, 0]);
       this.moverPos.push([m.p[0], m.p[1], m.p[2]]);
     });
+    for (const t of level.tiles ?? []) {
+      const desc = t.shape === 'disc' ? R.ColliderDesc.cylinder(t.h[1], t.h[0]) : R.ColliderDesc.cuboid(t.h[0], t.h[1], t.h[2]);
+      this.tileCols.push(this.world.createCollider(desc.setTranslation(t.p[0], t.p[1], t.p[2]).setCollisionGroups(LEVEL_GROUPS)));
+      this.tileOn.push(true);
+    }
     this.probe = this.world.createCollider(
       R.ColliderDesc.capsule(PLAYER_HALF_HEIGHT, PLAYER_RADIUS).setTranslation(0, -1000, 0).setCollisionGroups(PLAYER_GROUPS),
     );
@@ -110,6 +118,14 @@ export class SimWorld {
       const pos = this.moverPos[i];
       pos[0] = m.p[0] + a[0]; pos[1] = m.p[1] + a[1]; pos[2] = m.p[2] + a[2];
       this.moverCols[i].setTranslation({ x: pos[0], y: pos[1], z: pos[2] });
+    }
+    // 사라지는 발판: 시각만으로 켜고 끄므로 예측을 되감아 재생해도 결과가 같다
+    const tiles = this.level.tiles;
+    if (tiles) {
+      for (let i = 0; i < tiles.length; i++) {
+        const on = this.time < tiles[i].offAt;
+        if (on !== this.tileOn[i]) { this.tileOn[i] = on; this.tileCols[i].setEnabled(on); }
+      }
     }
     this.world.step(); // 충돌 질의 구조 갱신(동적 물체가 없어서 가볍다)
   }
@@ -197,6 +213,8 @@ export class SimWorld {
     // 회전봉: 봉이 움직이는 방향으로 날려 보낸다
     if (s.stun < STUN_TICKS - 6) {
       for (const sw of L.sweepers) {
+        const w = sweeperSpeed(sw, this.time);
+        if (w === 0) continue; // 아직 돌기 전
         if (s.y > sw.c[1] + sw.r || s.y + PLAYER_CENTER_Y * 2 < sw.c[1] - sw.r) continue;
         const a = sweeperAngle(sw, this.time);
         const ca = Math.cos(a), sa = Math.sin(a);
@@ -205,9 +223,9 @@ export class SimWorld {
         const side = -ox * sa + oz * ca; // 봉에 수직
         if (Math.abs(along) < sw.len + PLAYER_RADIUS && Math.abs(side) < sw.r + PLAYER_RADIUS) {
           // 봉 표면의 이동 방향 = 각속도 × 반지름 벡터
-          const dir = Math.sign(sw.speed) * Math.sign(along || 1);
+          const dir = Math.sign(w) * Math.sign(along || 1);
           const kx = -sa * dir, kz = ca * dir;
-          const power = 4.5 + Math.min(4, Math.abs(sw.speed * along) * 0.5);
+          const power = 4.5 + Math.min(4, Math.abs(w * along) * 0.5);
           s.vx = kx * power; s.vz = kz * power; s.vy = 6.5;
           s.stun = STUN_TICKS; s.grounded = 0; s.coyote = 0; s.mover = -1;
           break;
@@ -220,7 +238,13 @@ export class SimWorld {
     if (next < L.checkpoints.length && inBox(L.checkpoints[next].zone, s.x, s.y, s.z)) s.cp = next;
 
     // 낙하 → 마지막 체크포인트에서 부활
-    if (s.y < L.killY) this.respawn(s, slot);
+    if (s.y < L.killY) {
+      if (L.noRespawn) {
+        // 생존 게임: 부활 없이 낙하 기록만 남긴다(서버가 이를 보고 탈락 처리)
+        if (s.falls === 0) s.falls = 1;
+        s.y = L.killY - 1; s.vx = s.vy = s.vz = 0;
+      } else this.respawn(s, slot);
+    }
   }
 
   respawn(s: PlayerState, slot: number) {

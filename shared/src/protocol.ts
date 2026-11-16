@@ -13,6 +13,8 @@ export interface PlayerInfo {
   active: boolean;
   /** 이번 라운드 순위가 확정된 경우(완주/탈락) */
   place: number | null;
+  /** 이번 라운드에서 탈락해 관전 중 */
+  out: boolean;
 }
 
 export interface RoundRow {

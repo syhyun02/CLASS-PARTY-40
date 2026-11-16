@@ -4,7 +4,7 @@
  * 서버 틱 시간, CPU, 메모리, 통신량, 왕복 지연, 스냅샷 수신 주기를 출력한다.
  */
 import { io, type Socket } from 'socket.io-client';
-import { TICK_RATE, decodeSnapshot, type CreateRes, type JoinRes, type RoomState, type SelfMsg } from '@shared';
+import { DT, buildLevel, sweeperAngle, sweeperSpeed, TICK_RATE, decodeSnapshot, type CreateRes, type JoinRes, type RoomState, type SelfMsg } from '@shared';
 
 const arg = (name: string, def: string) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -14,6 +14,8 @@ const URL = arg('url', 'http://localhost:3001');
 const BOTS = Number(arg('bots', '40'));
 const SECONDS = Number(arg('seconds', '30'));
 const ROUNDS = Number(arg('rounds', '1'));
+const GAME = arg('game', 'race');
+const SMART = process.argv.includes('--smart'); // 생존 게임에서 발판과 봉을 보고 피하는 봇
 const WAIT = Number(arg('wait', '1.5')); // 시작 전 대기(초): 실제 브라우저가 같은 방에 들어올 시간
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -24,12 +26,12 @@ const connect = () => new Promise<Socket>((res, rej) => {
   s.once('connect_error', rej);
 });
 
-interface Bot { socket: Socket; id: number; seq: number; snaps: number; gaps: number[]; lastSnap: number; rtts: number[]; z: number; cp: number; bytes: number; ackLag: number[] }
+interface Bot { x: number; y: number; grounded: number; tick: number; socket: Socket; id: number; seq: number; snaps: number; gaps: number[]; lastSnap: number; rtts: number[]; z: number; cp: number; bytes: number; ackLag: number[] }
 
 const host = await connect();
 let room: RoomState | null = null;
 host.on('room', (r: RoomState) => { room = r; });
-const created = await new Promise<CreateRes>((res) => host.emit('host:create', { config: { mode: 'play', rounds: ROUNDS, games: ['race'] } }, res));
+const created = await new Promise<CreateRes>((res) => host.emit('host:create', { config: { mode: 'play', rounds: ROUNDS, games: [GAME] } }, res));
 if (!created.ok) throw new Error(created.error);
 console.log(`방 ${created.code} 생성, 봇 ${BOTS}명 접속 중...`);
 
@@ -38,7 +40,7 @@ for (let i = 0; i < BOTS; i++) {
   const socket = await connect();
   const res = await new Promise<JoinRes>((r) => socket.emit('join', { code: created.code, name: `봇${i + 1}`, color: '#ff6b8b' }, r));
   if (!res.ok) throw new Error(res.error);
-  const bot: Bot = { socket, id: res.id, seq: 0, snaps: 0, gaps: [], lastSnap: 0, rtts: [], z: 0, cp: 0, bytes: 0, ackLag: [] };
+  const bot: Bot = { x: 0, y: 0, grounded: 1, tick: 0, socket, id: res.id, seq: 0, snaps: 0, gaps: [], lastSnap: 0, rtts: [], z: 0, cp: 0, bytes: 0, ackLag: [] };
   socket.on('s', (buf: ArrayBuffer | Buffer) => {
     const now = performance.now();
     if (bot.lastSnap) bot.gaps.push(now - bot.lastSnap);
@@ -46,7 +48,7 @@ for (let i = 0; i < BOTS; i++) {
     bot.bytes += (buf as any).byteLength ?? (buf as any).length;
     if (i === 0) decodeSnapshot(buf instanceof ArrayBuffer ? buf : (buf as Buffer).buffer.slice((buf as Buffer).byteOffset, (buf as Buffer).byteOffset + (buf as Buffer).length) as ArrayBuffer);
   });
-  socket.on('me', (m: SelfMsg) => { bot.z = m.s[2]; bot.cp = m.s[13]; bot.ackLag.push(bot.seq - m.q); bot.bytes += JSON.stringify(m).length; });
+  socket.on('me', (m: SelfMsg) => { bot.x = m.s[0]; bot.y = m.s[1]; bot.grounded = m.s[7]; bot.tick = m.t; bot.z = m.s[2]; bot.cp = m.s[13]; bot.ackLag.push(bot.seq - m.q); bot.bytes += JSON.stringify(m).length; });
   bots.push(bot);
 }
 
@@ -57,7 +59,37 @@ const timer = setInterval(() => {
     const b = bots[i];
     const mx = Math.round(Math.sin(t * 0.7 + i) * 60);
     const jump = Math.sin(t * 2.3 + i * 1.7) > 0.6 ? 1 : 0;
-    b.socket.emit('in', [++b.seq, mx, 127, jump]);
+    if (SMART && room && room.levelId !== 'lobby') {
+      const lv = buildLevel(room.levelId, room.levelSeed);
+      const lt = (b.tick - room.levelTick) * DT + 0.1;
+      // 2.5초 넘게 남은 발판 중 가장 가까운 곳의 가운데로 간다(원판은 가장 안쪽 반지름 안으로)
+      let tx = b.x, tz = b.z, best = 1e9;
+      for (const tl of lv.tiles ?? []) {
+        if (tl.offAt - lt < 2.5) continue;
+        if (tl.shape === 'disc') { const r = Math.hypot(b.x, b.z), lim = tl.h[0] - 1.5; if (r > lim || best === 1e9) { const k = r > 0.1 ? Math.min(1, lim / r) : 1; const d = Math.max(0, r - lim); if (d < best || best === 1e9) { best = d; tx = b.x * k; tz = b.z * k; } } else { best = 0; tx = b.x; tz = b.z; } continue; }
+        const d = Math.hypot(tl.p[0] - b.x, tl.p[2] - b.z) + (Math.hypot(tl.p[0], tl.p[2]) < 1.5 ? 3 : 0) + ((i * 7 + Math.round(tl.p[0] * 3 + tl.p[2])) % 5) * 0.2;
+        if (d < best) { best = d; tx = tl.p[0]; tz = tl.p[2]; }
+      }
+      // 가운데 기둥에서는 떨어져 선다
+      if (Math.hypot(tx, tz) < 1.6) { const a = i * 2.4; tx += Math.sin(a) * 1.0; tz += Math.cos(a) * 1.0; }
+      let jmp = 0, hold = false;
+      for (const sw of lv.sweepers) {
+        if (sweeperSpeed(sw, lt) === 0) continue;
+        const high = sw.c[1] > 1.2;
+        for (const dtt of [0, 0.08, 0.16, 0.24]) {
+          const a = sweeperAngle(sw, lt + dtt);
+          const along = b.x * Math.cos(a) + b.z * Math.sin(a), side = -b.x * Math.sin(a) + b.z * Math.cos(a);
+          if (Math.abs(along) < sw.len + 0.5 && Math.abs(side) < 1.0) { if (high) hold = true; else jmp = 1; }
+        }
+      }
+      if (hold) jmp = 0;
+      const dx = tx - b.x, dz = tz - b.z, dl = Math.hypot(dx, dz);
+      const sp = dl > 0.3 ? 1 : 0;
+      b.socket.emit('in', [++b.seq, Math.round((dx / (dl || 1)) * 127 * sp), Math.round((dz / (dl || 1)) * 127 * sp), jmp]);
+      continue;
+    }
+    const mz = GAME === 'race' ? 127 : Math.round(Math.cos(t * 0.5 + i * 2) * 110);
+    b.socket.emit('in', [++b.seq, GAME === 'race' ? mx : Math.round(Math.sin(t * 0.5 + i * 2) * 110), mz, jump]);
   }
 }, 1000 / TICK_RATE);
 const pinger = setInterval(() => {
@@ -79,6 +111,8 @@ const pct = (a: number[], p: number) => { const s = [...a].sort((x, y) => x - y)
 const all = (f: (b: Bot) => number[]) => bots.flatMap(f);
 const gaps = all((b) => b.gaps), rtts = all((b) => b.rtts), lag = all((b) => b.ackLag);
 const finished = room!.players.filter((p) => p.place !== null).length;
+if (room!.lastResult) { const ts = room!.lastResult.map((r) => parseFloat(r.detail)).filter((v) => !isNaN(v)).sort((a, c) => a - c); console.log('탈락 시각 분포(초):', [0, 0.25, 0.5, 0.75, 1].map((q) => ts[Math.min(ts.length - 1, Math.floor(q * ts.length))]).join(' / ')); }
+if (room!.lastResult) console.log('결과 상위 5:', room!.lastResult.slice(0, 5).map((r) => `${r.rank}위 ${r.name} +${r.points} (${r.detail})`).join(' | '), '· 하위:', room!.lastResult.slice(-2).map((r) => `${r.rank}위 +${r.points} (${r.detail})`).join(' | '));
 
 console.log(JSON.stringify({
   bots: BOTS, seconds: +dur.toFixed(1),

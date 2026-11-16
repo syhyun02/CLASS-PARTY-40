@@ -5,7 +5,7 @@ import {
   type CreateRes, type HostCmd, type JoinRes, type LevelDef, type PlayerInput, type PlayerState, type RoomConfig,
   type RoomState, type SelfMsg, type SnapPlayer,
 } from '@shared';
-import { actionHeld, jumpHeld, resetCamera, worldMove } from './input';
+import { actionHeld, input, jumpHeld, resetCamera, worldMove } from './input';
 import { useStore } from './store';
 
 /** 다른 플레이어를 그릴 때 쓰는 값 */
@@ -158,8 +158,8 @@ class GameNet {
     this.history.clear();
     this.synced = false;
     this.err.x = this.err.y = this.err.z = 0;
-    this.resetMe();
     resetCamera();
+    this.resetMe();
   }
 
   private resetMe() {
@@ -168,7 +168,10 @@ class GameNet {
     this.pending = [];
     this.history.clear();
     this.synced = false;
-    if (this.me) { this.prev.x = this.me.x; this.prev.y = this.me.y; this.prev.z = this.me.z; }
+    if (this.me) {
+      this.prev.x = this.me.x; this.prev.y = this.me.y; this.prev.z = this.me.z;
+      if (this.level?.spawnRing) input.camYaw = this.me.yaw; // 카메라도 경기장 가운데를 향하게
+    }
   }
 
   private onSnapshot(buf: ArrayBuffer) {
@@ -239,7 +242,7 @@ class GameNet {
     const mine = room.players.find((p) => p.id === myId);
     if (!mine) return false;
     if (room.phase === 'lobby' || room.phase === 'draw' || room.phase === 'final') return true;
-    return room.phase === 'playing' && mine.active;
+    return room.phase === 'playing' && mine.active && !mine.out;
   }
 
   /** 렌더 프레임마다 호출: 고정 30Hz로 입력을 보내고 내 캐릭터를 예측 이동한다. */
@@ -251,7 +254,7 @@ class GameNet {
 
     const st = useStore.getState();
     const mine = st.room?.players.find((p) => p.id === st.myId);
-    const playing = this.role === 'player' && this.me && this.sim && this.socket?.connected && mine?.active && !st.room?.paused;
+    const playing = this.role === 'player' && this.me && this.sim && this.socket?.connected && mine?.active && !mine.out && !st.room?.paused;
     if (playing) {
       this.acc += dt;
       while (this.acc >= DT) {

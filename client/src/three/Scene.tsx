@@ -35,13 +35,20 @@ function Driver({ spectator }: { spectator: boolean }) {
       first.current = false;
     } else if (list.length > 0) {
       // 관전(교사 화면, 늦게 들어온 학생): 선두 무리를 위에서 비춘다
-      let sx = 0, sz = 0, sy = 0, n = 0;
-      const sorted = [...list].sort((a, b) => b.z - a.z).slice(0, Math.max(3, Math.ceil(list.length / 3)));
-      for (const p of sorted) { sx += p.x; sy += p.y; sz += p.z; n++; }
       const lobby = net.level?.id === 'lobby';
-      target.set(lobby ? 0 : sx / n * 0.4, lobby ? 0 : sy / n, lobby ? 0 : sz / n);
-      const a = lobby ? state.clock.elapsedTime * 0.08 : 0;
-      want.set(target.x + Math.sin(a) * 24, target.y + (lobby ? 17 : 14), target.z - Math.cos(a) * (lobby ? 24 : 17));
+      if (net.level?.track) {
+        // 레이스: 선두 무리를 뒤에서 따라간다
+        let sx = 0, sz = 0, sy = 0, n = 0;
+        const sorted = [...list].sort((a, b) => b.z - a.z).slice(0, Math.max(3, Math.ceil(list.length / 3)));
+        for (const p of sorted) { sx += p.x; sy += p.y; sz += p.z; n++; }
+        target.set((sx / n) * 0.4, sy / n, sz / n);
+        want.set(target.x, target.y + 14, target.z - 17);
+      } else {
+        // 대기실·생존 게임: 경기장 전체를 천천히 돌며 내려다본다
+        const a = state.clock.elapsedTime * (lobby ? 0.08 : 0.05);
+        target.set(0, 0, 0);
+        want.set(Math.sin(a) * 23, lobby ? 17 : 19, -Math.cos(a) * 23);
+      }
       camera.position.lerp(want, snap ? 1 : Math.min(1, dt * 2.5));
       camera.lookAt(target);
       first.current = false;

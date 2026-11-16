@@ -13,8 +13,9 @@ const CANDY = ['#ff4f8b', '#ffd43b', '#4dabf7', '#5fe0a8', '#b693ff', '#ff9f43']
  * 바닥·발판용 재질. 셰이더에서 무늬를 그려 텍스처 없이도 장난감 매트처럼 보이게 한다.
  * 윗면: 2m 체크무늬 + 흰 테두리 / 옆면: 진한 색 + 위쪽 흰 띠
  */
-function makeBlockMaterial(low: boolean) {
+function makeBlockMaterial(low: boolean, disc = false) {
   const m = low ? new THREE.MeshLambertMaterial() : new THREE.MeshStandardMaterial({ roughness: 0.62, metalness: 0 });
+  if (disc) m.defines = { ...(m.defines ?? {}), DISC: 1 };
   m.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vLPos;\nvarying vec3 vONormal;\nvarying vec3 vBScale;')
@@ -32,7 +33,11 @@ function makeBlockMaterial(low: boolean) {
         if (vONormal.y > 0.5) {
           vec2 t = floor((m.xz + 500.0) / 2.0);
           diffuseColor.rgb *= mix(1.0, 0.88, mod(t.x + t.y, 2.0));
-          float e = min(vBScale.x - abs(m.x), vBScale.z - abs(m.z));
+          #ifdef DISC
+            float e = vBScale.x * (1.0 - length(vLPos.xz));
+          #else
+            float e = min(vBScale.x - abs(m.x), vBScale.z - abs(m.z));
+          #endif
           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), (1.0 - smoothstep(0.2, 0.26, e)) * 0.9);
         } else if (vONormal.y > -0.5) {
           float fromTop = vBScale.y - m.y;
@@ -85,7 +90,7 @@ function seeded(seed: number) {
 /** 맵의 범위(장식 배치용) */
 function bounds(level: LevelDef) {
   let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, y1 = -Infinity;
-  for (const b of [...level.statics, ...level.movers]) {
+  for (const b of [...level.statics, ...level.movers, ...(level.tiles ?? [])]) {
     x0 = Math.min(x0, b.p[0] - b.h[0]); x1 = Math.max(x1, b.p[0] + b.h[0]);
     z0 = Math.min(z0, b.p[2] - b.h[2]); z1 = Math.max(z1, b.p[2] + b.h[2]);
     y1 = Math.max(y1, b.p[1] + b.h[1]);
@@ -111,10 +116,11 @@ function Decor({ level, low }: { level: LevelDef; low: boolean }) {
   const arches = level.checkpoints.slice(1, level.finish ? -1 : undefined);
   const balloonData = useMemo(() => {
     const r = seeded(77);
+    const far = level.track ? 5 : 22; // 경기장을 돌며 비추는 관전 카메라에 걸리지 않게 멀리 둔다
     return Array.from({ length: nBalloon }, (_, i) => {
       const side = i % 2 ? 1 : -1;
       return {
-        x: (side > 0 ? B.x1 : B.x0) + side * (5 + r() * 22), y: B.y1 + 1 + r() * 14,
+        x: (side > 0 ? B.x1 : B.x0) + side * (far + r() * 22), y: B.y1 + 1 + r() * 14,
         z: B.z0 - 10 + r() * (B.z1 - B.z0 + 30), s: 0.9 + r() * 1.5, ph: r() * 6.28, c: CANDY[i % CANDY.length],
       };
     });
@@ -126,7 +132,7 @@ function Decor({ level, low }: { level: LevelDef; low: boolean }) {
     for (let i = 0; i < nCloud; i++) {
       const x = B.x0 - 45 + r() * (B.x1 - B.x0 + 90), z = B.z0 - 30 + r() * (B.z1 - B.z0 + 90);
       const under = x > B.x0 - 3 && x < B.x1 + 3;
-      dummy.position.set(x, level.killY - (under ? 9 : 7) - r() * 6, z);
+      dummy.position.set(x, Math.min(level.killY, -9) - (under ? 9 : 7) - r() * 6, z);
       const s = 3.5 + r() * 4.5;
       dummy.scale.set(s * 1.6, s * 0.6, s * 1.3);
       dummy.rotation.set(0, 0, 0);
@@ -136,7 +142,7 @@ function Decor({ level, low }: { level: LevelDef; low: boolean }) {
     clouds.current.instanceMatrix.needsUpdate = true;
     for (let i = 0; i < nRing; i++) {
       const side = i % 2 ? 1 : -1;
-      dummy.position.set((side > 0 ? B.x1 : B.x0) + side * (9 + r() * 16), B.y1 + 2 + r() * 10, B.z0 + r() * (B.z1 - B.z0 + 20));
+      dummy.position.set((side > 0 ? B.x1 : B.x0) + side * ((level.track ? 9 : 24) + r() * 16), B.y1 + 2 + r() * 10, B.z0 + r() * (B.z1 - B.z0 + 20));
       const s = 1.8 + r() * 2.2;
       dummy.scale.set(s, s, s);
       dummy.rotation.set(r() * 1.2 - 0.6, r() * 3, r() * 0.8);
@@ -177,7 +183,7 @@ function Decor({ level, low }: { level: LevelDef; low: boolean }) {
   return (
     <group>
       <instancedMesh ref={clouds} args={[sphere, undefined, nCloud]} frustumCulled={false}>
-        <meshLambertMaterial color="#f3f7ff" emissive="#b9c8ff" emissiveIntensity={0.28} />
+        <meshLambertMaterial color="#eef3ff" emissive="#a9b8f5" emissiveIntensity={0.2} />
       </instancedMesh>
       <instancedMesh ref={balloons} args={[sphere, undefined, nBalloon]} frustumCulled={false}>
         {low ? <meshLambertMaterial /> : <meshStandardMaterial roughness={0.25} />}
@@ -206,6 +212,71 @@ function Decor({ level, low }: { level: LevelDef; low: boolean }) {
           </group>
         );
       })}
+    </group>
+  );
+}
+
+const WARN = new THREE.Color('#ffffff');
+
+/** 사라지는 발판: 사라지기 전에 깜빡이며 떨다가, 시간이 되면 아래로 떨어진다. */
+function Tiles({ level, low }: { level: LevelDef; low: boolean }) {
+  const all = level.tiles ?? [];
+  const boxes = useMemo(() => all.filter((t) => t.shape === 'box'), [level]);
+  const discs = useMemo(() => all.filter((t) => t.shape === 'disc'), [level]);
+  const mesh = useRef<THREE.InstancedMesh>(null!);
+  const discGroup = useRef<THREE.Group>(null!);
+  const box = useMemo(() => new THREE.BoxGeometry(2, 2, 2), []);
+  const cyl = useMemo(() => new THREE.CylinderGeometry(1, 1, 2, low ? 32 : 56), [low]);
+  const mat = useMemo(() => makeBlockMaterial(low), [low]);
+  const discMats = useMemo(() => discs.map((d) => { const m = makeBlockMaterial(low, true); m.color.set(d.color ?? '#ffffff'); return m; }), [discs, low]);
+  const base = useMemo(() => boxes.map((b) => new THREE.Color(b.color ?? '#ffffff')), [boxes]);
+  useEffect(() => () => { mat.dispose(); discMats.forEach((m) => m.dispose()); }, [mat, discMats]);
+
+  useFrame(() => {
+    const t = net.levelTime();
+    boxes.forEach((b, i) => {
+      const gone = t - b.offAt;
+      let y = b.p[1], sc = 1, dx = 0;
+      if (gone >= 0) {
+        const k = Math.min(1, gone / 0.4);
+        y -= k * k * 4; sc = 1 - k;
+        mesh.current.setColorAt(i, WARN);
+      } else if (t >= b.warnAt) {
+        // 남은 시간이 줄수록 더 빨리 깜빡인다
+        const left = b.offAt - t;
+        const f = 0.5 + 0.5 * Math.sin(t * (left < 0.7 ? 30 : 14));
+        mesh.current.setColorAt(i, col.copy(base[i]).lerp(WARN, f * 0.75));
+        dx = Math.sin(t * 40 + i) * 0.035;
+      } else mesh.current.setColorAt(i, base[i]);
+      dummy.position.set(b.p[0] + dx, y, b.p[2]);
+      dummy.scale.set(b.h[0] * sc, b.h[1] * sc, b.h[2] * sc);
+      dummy.rotation.set(0, 0, 0);
+      dummy.updateMatrix();
+      mesh.current.setMatrixAt(i, dummy.matrix);
+    });
+    if (boxes.length) {
+      mesh.current.instanceMatrix.needsUpdate = true;
+      if (mesh.current.instanceColor) mesh.current.instanceColor.needsUpdate = true;
+    }
+    discs.forEach((d, i) => {
+      const m = discGroup.current.children[i] as THREE.Mesh;
+      const gone = t - d.offAt;
+      m.visible = gone < 1.2;
+      m.position.y = d.p[1] - (gone > 0 ? gone * gone * 14 : 0);
+      const warn = gone < 0 && t >= d.warnAt;
+      const f = warn ? 0.5 + 0.5 * Math.sin(t * (d.offAt - t < 1 ? 28 : 12)) : 0;
+      discMats[i].emissive.setScalar(f * 0.45);
+    });
+  });
+
+  return (
+    <group>
+      <instancedMesh ref={mesh} args={[box, mat, Math.max(1, boxes.length)]} count={boxes.length} frustumCulled={false} />
+      <group ref={discGroup}>
+        {discs.map((d, i) => (
+          <mesh key={i} geometry={cyl} material={discMats[i]} position={d.p} scale={[d.h[0], d.h[1], d.h[2]]} />
+        ))}
+      </group>
     </group>
   );
 }
@@ -262,7 +333,11 @@ export function LevelView({ level }: { level: LevelDef }) {
     });
     level.sweepers.forEach((s, i) => {
       const g = sweepers.current.children[i];
-      if (g) g.rotation.y = -sweeperAngle(s, t);
+      if (!g) return;
+      g.rotation.y = -sweeperAngle(s, t);
+      // 나중에 등장하는 봉은 2.5초 전부터 깜빡이며 예고한다
+      const wait = (s.startAt ?? 0) - t;
+      g.visible = wait <= 0 || (wait < 2.5 && (t * 5) % 1 < 0.6);
     });
     const beat = state.clock.elapsedTime * 3;
     for (const p of pads.current.children) {
@@ -276,7 +351,8 @@ export function LevelView({ level }: { level: LevelDef }) {
 
   return (
     <group>
-      <instancedMesh ref={statics} args={[box, blockMat, level.statics.length]} receiveShadow={shadow} />
+      <instancedMesh ref={statics} args={[box, blockMat, Math.max(1, level.statics.length)]} count={level.statics.length} receiveShadow={shadow} />
+      <Tiles level={level} low={low} />
       <instancedMesh ref={strips} args={[box, undefined, Math.max(1, cps.length)]} count={cps.length}>
         <meshBasicMaterial color="#ffffff" transparent opacity={0.85} />
       </instancedMesh>

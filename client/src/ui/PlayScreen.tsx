@@ -5,7 +5,7 @@ import { useStore } from '../game/store';
 import { Scene } from '../three/Scene';
 import { Controls } from './Controls';
 import { usePortrait } from './hooks';
-import { Blob, CountdownOverlay, DrawOverlay, FinalOverlay, RaceHud, ResultOverlay, SettingsButton, StatusOverlays } from './Overlays';
+import { Blob, CountdownOverlay, DrawOverlay, FinalOverlay, GameHud, ResultOverlay, SettingsButton, StatusOverlays } from './Overlays';
 
 /** 학생 화면: 3D 경기장 + 조작 + 단계별 안내 */
 export function PlayScreen() {
@@ -17,7 +17,8 @@ export function PlayScreen() {
   const [colors, setColors] = useState(false);
   if (!room) return <div className="party-bg flex h-full items-center justify-center font-display text-2xl">불러오는 중…</div>;
   const mine = room.players.find((p) => p.id === myId);
-  const spectating = !!mine && !mine.active;
+  const late = !!mine && !mine.active; // 경기 도중 입장
+  const spectating = late || (!!mine && mine.out && room.phase === 'playing');
   const phase = room.phase;
 
   return (
@@ -42,10 +43,10 @@ export function PlayScreen() {
       )}
       {phase === 'draw' && <DrawOverlay room={room} />}
       {phase === 'countdown' && <CountdownOverlay room={room} />}
-      {phase === 'playing' && <RaceHud room={room} myId={myId} />}
+      {phase === 'playing' && <GameHud room={room} myId={myId} />}
       {phase === 'result' && <ResultOverlay room={room} myId={myId} />}
       {phase === 'final' && <FinalOverlay room={room} myId={myId} />}
-      {spectating && (phase === 'playing' || phase === 'countdown') && (
+      {late && (phase === 'playing' || phase === 'countdown') && (
         <div className="pointer-events-none absolute inset-x-0 bottom-6 z-10 flex justify-center">
           <div className="card !py-2 font-display">👀 관전 중 · 다음 라운드부터 함께 뛰어요</div>
         </div>

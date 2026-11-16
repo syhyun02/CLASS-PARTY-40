@@ -91,6 +91,32 @@ export function RaceHud({ room, myId }: { room: RoomState; myId: number | null }
   );
 }
 
+/** 생존 게임 상단 정보: 남은 시간, 생존 인원, 내 탈락 순위 */
+export function SurvivalHud({ room, myId }: { room: RoomState; myId: number | null }) {
+  const left = useSecondsLeft(4);
+  const racers = room.players.filter((p) => p.active);
+  const alive = racers.filter((p) => !p.out).length;
+  const mine = room.players.find((p) => p.id === myId);
+  const game = getGame(room.gameId ?? '');
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-2 p-3" style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}>
+      <div className="chip">{game?.emoji} {game?.name}</div>
+      <div className={`chip tabular-nums text-lg ${left <= 15 ? 'animate-wiggle !bg-bubble !text-white' : ''}`}>⏱ {Math.floor(left / 60)}:{String(Math.floor(left % 60)).padStart(2, '0')}</div>
+      <div className="chip tabular-nums">💪 <b className="text-xl text-bubble">{alive}</b> / {racers.length}명 생존</div>
+      {mine?.out && (
+        <div className="absolute inset-x-0 top-20 flex justify-center">
+          <div className="card animate-pop px-6 py-3 text-center font-display text-2xl">💦 탈락! {mine.place}위 · 관전 중</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 게임 장르에 맞는 경기 중 HUD */
+export function GameHud({ room, myId }: { room: RoomState; myId: number | null }) {
+  return getGame(room.gameId ?? '')?.genre === 'race' ? <RaceHud room={room} myId={myId} /> : <SurvivalHud room={room} myId={myId} />;
+}
+
 function Row({ r, me, showPoints }: { r: RoundRow; me: boolean; showPoints: boolean }) {
   return (
     <div className={`flex items-center gap-2 rounded-2xl px-3 py-1.5 ${me ? 'bg-lemon' : 'bg-white/80'}`}>

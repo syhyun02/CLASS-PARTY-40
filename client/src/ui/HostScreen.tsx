@@ -5,7 +5,7 @@ import { net } from '../game/net';
 import { useStore } from '../game/store';
 import { Scene } from '../three/Scene';
 import { useSecondsLeft } from './hooks';
-import { Blob, CountdownOverlay, DrawOverlay, FinalOverlay, RaceHud, ResultOverlay, StatusOverlays, standings } from './Overlays';
+import { Blob, CountdownOverlay, DrawOverlay, FinalOverlay, GameHud, ResultOverlay, StatusOverlays, standings } from './Overlays';
 
 const PHASE_LABEL: Record<RoomState['phase'], string> = {
   lobby: '대기실', draw: '게임 추첨 중', countdown: '카운트다운', playing: '경기 중', result: '라운드 결과', final: '최종 시상식',
@@ -76,7 +76,7 @@ export function HostScreen() {
         )}
         {room.phase === 'draw' && <DrawOverlay room={room} />}
         {room.phase === 'countdown' && <CountdownOverlay room={room} />}
-        {room.phase === 'playing' && <RaceHud room={room} myId={null} />}
+        {room.phase === 'playing' && <GameHud room={room} myId={null} />}
         {room.phase === 'result' && <ResultOverlay room={room} myId={null} />}
         {room.phase === 'final' && (
           <FinalOverlay room={room} myId={null}>
@@ -141,7 +141,7 @@ export function HostScreen() {
                     <div className="min-w-0 flex-1 truncate font-display">{r.name}</div>
                     {!p.connected && <span className="text-xs">연결 끊김</span>}
                     {p.connected && !p.active && <span className="text-xs">관전</span>}
-                    {running && p.place !== null && <span className="text-xs">🏁{p.place}</span>}
+                    {running && p.place !== null && <span className="text-xs">{p.out ? '💦' : '🏁'}{p.place}</span>}
                     {!lobby && <div className="w-12 text-right font-display tabular-nums">{r.total}</div>}
                     <button className="rounded-full px-2 text-sm opacity-50 hover:bg-bubble hover:text-white hover:opacity-100" title="내보내기" aria-label={`${r.name} 내보내기`} onClick={() => cmd({ type: 'kick', id: r.id })}>✕</button>
                   </div>

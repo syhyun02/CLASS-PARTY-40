@@ -23,7 +23,23 @@ export interface Sweeper {
   speed: number; // rad/s
   phase: number; // rad
   color?: string;
+  /** 이 시각(초) 전에는 멈춰 있고 판정도 없다 */
+  startAt?: number;
+  /** 시간이 갈수록 빨라지는 정도(rad/s²)와 최고 속도 */
+  accel?: number;
+  maxSpeed?: number;
 }
+
+/**
+ * 정해진 시각에 사라지는 발판. 일정이 맵 데이터에 들어 있어서
+ * 서버와 클라이언트가 별도 통신 없이 같은 순간에 같은 발판을 없앤다.
+ */
+export interface Tile extends Box {
+  shape: 'box' | 'disc'; // disc는 h = [반지름, 절반 높이, 반지름]
+  warnAt: number; // 깜빡이기 시작하는 시각(초)
+  offAt: number; // 사라지는 시각(초). 사라지지 않으면 NEVER
+}
+export const NEVER = 1e9;
 
 export interface Pad extends Box {
   vy: number; // 밟으면 받는 위쪽 속도
@@ -41,6 +57,11 @@ export interface LevelDef {
   movers: Mover[];
   sweepers: Sweeper[];
   pads: Pad[];
+  tiles?: Tile[];
+  /** true면 떨어져도 부활하지 않는다(생존 게임) */
+  noRespawn?: boolean;
+  /** 지정하면 격자 대신 원형으로 둘러서서 출발한다 */
+  spawnRing?: number;
   /** 0번은 출발 지점. 낙하하면 마지막으로 지난 체크포인트에서 부활한다. */
   checkpoints: Checkpoint[];
   spawnCols: number;
@@ -58,12 +79,27 @@ export function moverOffset(m: Mover, t: number): Vec3 {
 }
 
 export function sweeperAngle(s: Sweeper, t: number): number {
-  return s.phase + s.speed * t;
+  const u = Math.max(0, t - (s.startAt ?? 0));
+  if (!s.accel) return s.phase + s.speed * u;
+  const s0 = Math.abs(s.speed), mx = s.maxSpeed ?? 99;
+  const tm = Math.max(0, (mx - s0) / s.accel), uu = Math.min(u, tm);
+  return s.phase + Math.sign(s.speed) * (s0 * uu + 0.5 * s.accel * uu * uu + (u > tm ? mx * (u - tm) : 0));
+}
+
+/** 현재 회전 속도(rad/s, 부호 포함). 시작 전에는 0 */
+export function sweeperSpeed(s: Sweeper, t: number): number {
+  if (t < (s.startAt ?? 0)) return 0;
+  if (!s.accel) return s.speed;
+  return Math.sign(s.speed) * Math.min(s.maxSpeed ?? 99, Math.abs(s.speed) + s.accel * (t - (s.startAt ?? 0)));
 }
 
 /** slot(0~39)에 따른 격자 배치. 부활할 때도 같은 규칙으로 흩어 놓는다. */
 export function spawnPoint(level: LevelDef, cp: number, slot: number): Vec3 {
   const c = level.checkpoints[Math.min(cp, level.checkpoints.length - 1)];
+  if (level.spawnRing) {
+    const a = (slot / 40) * Math.PI * 2;
+    return [c.spawn[0] + Math.sin(a) * level.spawnRing, c.spawn[1], c.spawn[2] + Math.cos(a) * level.spawnRing];
+  }
   const cols = level.spawnCols;
   const col = slot % cols;
   const row = Math.floor(slot / cols);

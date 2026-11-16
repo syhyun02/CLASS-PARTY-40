@@ -10,6 +10,8 @@ export interface GamePlayer {
   /** 완주·탈락 등으로 이번 라운드가 끝난 경우 true */
   done: boolean;
   place: number | null;
+  /** 탈락해서 더 이상 경기장에 없음(관전) */
+  out: boolean;
 }
 
 export interface GameCtx {

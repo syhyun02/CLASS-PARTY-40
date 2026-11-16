@@ -1,7 +1,7 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import type { Server, Socket } from 'socket.io';
 import {
-  FLAG_DONE, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_MOVING, FLAG_STUN, MAX_PLAYERS, NO_INPUT, PLAYER_COLORS, PLAYER_RADIUS,
+  COUNTDOWN_SEC, FLAG_DONE, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_MOVING, FLAG_STUN, MAX_PLAYERS, NO_INPUT, PLAYER_COLORS, PLAYER_RADIUS,
   SNAPSHOT_EVERY, SimWorld, TICK_RATE, buildLevel, encodeSnapshot, getGame, newPlayerState, packState,
   type HostCmd, type InputMsg, type JoinReq, type JoinRes, type LevelDef, type Phase, type PlayerInput,
   type PlayerState, type RoomConfig, type RoomState, type RoundRow, type SelfMsg, type SnapPlayer,
@@ -12,7 +12,7 @@ import { metrics } from './metrics';
 
 const sec = (s: number) => Math.round(s * TICK_RATE);
 const DRAW_TICKS = sec(6);
-const COUNTDOWN_TICKS = sec(4);
+const COUNTDOWN_TICKS = sec(COUNTDOWN_SEC);
 const RESULT_TICKS = sec(12);
 const MAX_QUEUE = 8;
 
@@ -27,6 +27,7 @@ class Player implements GamePlayer {
   tokens = 2;
   active = true;
   done = false;
+  out = false;
   place: number | null = null;
   leftAt = 0;
   constructor(public id: number, public token: string, public name: string, public color: string, level: LevelDef) {
@@ -176,7 +177,7 @@ export class Room {
         this.setLevel('lobby', 0);
         this.setPhase('lobby', 0);
         this.round = 0; this.gameId = null; this.lastResult = null;
-        for (const p of this.players.values()) { p.active = true; p.done = false; p.place = null; }
+        for (const p of this.players.values()) { p.active = true; p.done = false; p.out = false; p.place = null; }
         break;
       case 'kick': {
         const p = this.players.get(cmd.id);
@@ -224,7 +225,7 @@ export class Room {
     this.gameId = drawGame(this.config.games, this.drawn);
     this.drawn.push(this.gameId);
     if (this.levelId !== 'lobby') this.setLevel('lobby', 0);
-    for (const p of this.players.values()) { p.done = false; p.place = null; p.active = true; }
+    for (const p of this.players.values()) { p.done = false; p.out = false; p.place = null; p.active = true; }
     this.setPhase('draw', DRAW_TICKS);
   }
 
@@ -232,7 +233,7 @@ export class Room {
     const seed = (Math.random() * 2 ** 31) | 0;
     this.setLevel(this.gameId!, seed);
     this.roundPlayers = [...this.players.values()];
-    for (const p of this.roundPlayers) { p.active = true; p.done = false; p.place = null; }
+    for (const p of this.roundPlayers) { p.active = true; p.done = false; p.out = false; p.place = null; }
     this.setPhase('countdown', COUNTDOWN_TICKS);
   }
 
@@ -272,7 +273,7 @@ export class Room {
 
   private toFinal() {
     if (this.levelId !== 'lobby') this.setLevel('lobby', 0);
-    for (const p of this.players.values()) { p.active = true; p.done = false; }
+    for (const p of this.players.values()) { p.active = true; p.done = false; p.out = false; }
     this.setPhase('final', 0);
   }
 
@@ -292,7 +293,7 @@ export class Room {
     sim.setTick(this.tick - this.levelTick);
 
     for (const p of this.players.values()) {
-      if (!p.connected || !p.active) continue;
+      if (!p.connected || !p.active || p.out) continue;
       // 입력 한 개 = 물리 한 걸음. 클라이언트 예측과 걸음 수가 정확히 맞아야 보정이 줄어든다.
       // 토큰 버킷으로 틱당 평균 1개(순간 최대 4개)만 허용해 입력을 몰아 보내는 속도 조작을 막는다.
       const can = this.canMove(p);
@@ -343,7 +344,7 @@ export class Room {
   /** 겹친 캐릭터를 서로 밀어낸다(서버 판정). 벽을 뚫지 않도록 물리 엔진을 거쳐 이동한다. */
   private separatePlayers() {
     const list: Player[] = [];
-    for (const p of this.players.values()) if (p.connected && p.active) list.push(p);
+    for (const p of this.players.values()) if (p.connected && p.active && !p.out) list.push(p);
     const min = PLAYER_RADIUS * 2;
     for (let i = 0; i < list.length; i++) {
       const a = list[i].state;
@@ -371,7 +372,7 @@ export class Room {
       if (s.grounded) flags |= FLAG_GROUNDED;
       if (s.stun > 0) flags |= FLAG_STUN;
       if (p.done) flags |= FLAG_DONE;
-      if (!p.connected || !p.active) flags |= FLAG_HIDDEN;
+      if (!p.connected || !p.active || p.out) flags |= FLAG_HIDDEN;
       if (Math.abs(s.vx) + Math.abs(s.vz) > 0.5) flags |= FLAG_MOVING;
       snap.push({ id: p.id, x: s.x, y: s.y, z: s.z, yaw: s.yaw, flags });
     }
@@ -402,7 +403,7 @@ export class Room {
       levelId: this.levelId, levelSeed: this.levelSeed, levelKey: this.levelKey, levelTick: this.levelTick,
       phaseEndTick: this.phaseEndTick,
       players: [...this.players.values()].map((p) => ({
-        id: p.id, name: p.name, color: p.color, score: p.score, connected: p.connected, active: p.active, place: p.place,
+        id: p.id, name: p.name, color: p.color, score: p.score, connected: p.connected, active: p.active, place: p.place, out: p.out,
       })),
       lastResult: this.lastResult,
       history: this.history,

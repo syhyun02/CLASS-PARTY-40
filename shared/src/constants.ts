@@ -23,3 +23,6 @@ export const PLAYER_COLORS = [
 ] as const;
 
 export const SNAP_POS_SCALE = 50; // int16 위치 양자화(2cm)
+
+/** 카운트다운 길이(초). 맵 시간은 카운트다운 시작부터 흐르므로, 생존 게임의 일정은 이 값만큼 뒤에서 시작한다. */
+export const COUNTDOWN_SEC = 4;

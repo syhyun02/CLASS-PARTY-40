@@ -1,10 +1,14 @@
 import { GAMES, type GameMode } from '@shared';
 import { raceGame } from './race';
+import { survivalGame } from './survival';
 import type { MinigameServer } from './types';
 
 /** 구현된 미니게임 등록부. 새 게임은 파일 하나를 만들고 여기에 추가하면 된다. */
 const REGISTRY: Record<string, MinigameServer> = {
   [raceGame.id]: raceGame,
+  spinner: survivalGame('spinner'),
+  tiles: survivalGame('tiles'),
+  last: survivalGame('last'),
 };
 
 export const getMinigame = (id: string) => REGISTRY[id];
