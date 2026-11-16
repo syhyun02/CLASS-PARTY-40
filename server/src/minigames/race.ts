@@ -2,8 +2,8 @@ import { TICK_RATE, rankPoints } from '@shared';
 import type { GameCtx, GamePlayer, MinigameRuntime, MinigameServer, RoundOutcome } from './types';
 
 /** 장애물 레이스: 결승 구역에 먼저 들어온 순서로 순위를 매긴다. */
-export const raceGame: MinigameServer = {
-  id: 'race',
+export const raceGame = (id: string): MinigameServer => ({
+  id,
   create(ctx: GameCtx): MinigameRuntime {
     const finishCp = ctx.level.checkpoints.length - 1;
     const finishTick = new Map<number, number>();
@@ -60,4 +60,4 @@ export const raceGame: MinigameServer = {
       },
     };
   },
-};
+});

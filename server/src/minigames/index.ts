@@ -1,12 +1,18 @@
 import { GAMES, type GameMode } from '@shared';
 import { raceGame } from './race';
 import { collectGame } from './collect';
+import { quizGame } from './quiz';
 import { survivalGame } from './survival';
+import { tailGame } from './tail';
 import type { MinigameServer } from './types';
 
 /** 구현된 미니게임 등록부. 새 게임은 파일 하나를 만들고 여기에 추가하면 된다. */
 const REGISTRY: Record<string, MinigameServer> = {
-  [raceGame.id]: raceGame,
+  race: raceGame('race'),
+  maze: raceGame('maze'),
+  sumo: survivalGame('sumo', { push: true }),
+  tail: tailGame('tail'),
+  answer: quizGame('answer'),
   spinner: survivalGame('spinner'),
   tiles: survivalGame('tiles'),
   last: survivalGame('last'),

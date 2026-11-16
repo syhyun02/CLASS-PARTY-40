@@ -1,7 +1,7 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import type { Server, Socket } from 'socket.io';
 import {
-  COUNTDOWN_SEC, DT, FLAG_DONE, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_MOVING, FLAG_STUN, MAX_PLAYERS, NO_INPUT, PLAYER_COLORS, PLAYER_RADIUS,
+  COUNTDOWN_SEC, DT, FLAG_ACT, FLAG_DONE, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_MOVING, FLAG_STUN, MAX_PLAYERS, NO_INPUT, PLAYER_COLORS, PLAYER_RADIUS,
   SNAPSHOT_EVERY, SimWorld, TICK_RATE, buildLevel, encodeSnapshot, getGame, newPlayerState, packState,
   type HostCmd, type InputMsg, type JoinReq, type JoinRes, type LevelDef, type Phase, type PlayerInput,
   type PlayerState, type RoomConfig, type RoomState, type RoundRow, type SelfMsg, type SnapPlayer,
@@ -28,6 +28,7 @@ class Player implements GamePlayer {
   active = true;
   done = false;
   out = false;
+  pushAt = -999;
   place: number | null = null;
   leftAt = 0;
   constructor(public id: number, public token: string, public name: string, public color: string, level: LevelDef) {
@@ -255,6 +256,7 @@ export class Room {
       shortenTo: (t) => { this.phaseEndTick = this.tick + t; this.dirty = true; },
       touch: () => { this.dirty = true; },
       levelTime: () => (this.tick - this.levelTick) * DT,
+      tick: () => this.tick,
       publish: (st) => { this.gameState = st; this.gameDirty = true; },
     };
     this.runtime = getMinigame(this.gameId!).create(ctx);
@@ -386,6 +388,7 @@ export class Room {
       if (p.done) flags |= FLAG_DONE;
       if (!p.connected || !p.active || p.out) flags |= FLAG_HIDDEN;
       if (Math.abs(s.vx) + Math.abs(s.vz) > 0.5) flags |= FLAG_MOVING;
+      if (this.tick - p.pushAt < 9) flags |= FLAG_ACT;
       snap.push({ id: p.id, x: s.x, y: s.y, z: s.z, yaw: s.yaw, flags });
     }
     const buf = Buffer.from(encodeSnapshot(this.tick, snap));

@@ -4,7 +4,7 @@
  * 서버 틱 시간, CPU, 메모리, 통신량, 왕복 지연, 스냅샷 수신 주기를 출력한다.
  */
 import { io, type Socket } from 'socket.io-client';
-import { DT, buildLevel, sweeperAngle, sweeperSpeed, TICK_RATE, decodeSnapshot, type CreateRes, type JoinRes, type RoomState, type SelfMsg } from '@shared';
+import { DT, QUIZ_PAD_POS, buildLevel, sweeperAngle, sweeperSpeed, TICK_RATE, decodeSnapshot, type CreateRes, type JoinRes, type RoomState, type SelfMsg } from '@shared';
 
 const arg = (name: string, def: string) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -97,6 +97,22 @@ const timer = setInterval(() => {
         // 가는 길이 회전봉 구역을 지나면 돌아간다
         if (Math.hypot(b.x, b.z) < 7.2) { const a = Math.atan2(b.x, b.z); tx = Math.sin(a) * 9; tz = Math.cos(a) * 9; }
       }
+      // 정답 발판: 열에 일곱은 정답 발판으로, 나머지는 아무 발판으로
+      if (lv.quiz) {
+        let q = lv.quiz[0];
+        for (const x of lv.quiz) if (x.at <= lt) q = x;
+        const k = lv.quiz.indexOf(q);
+        const padI = (i * 7 + k * 3) % 10 < 7 ? q.answer : (i + k) % 4;
+        const inWindow = lt >= q.at && lt < q.endAt;
+        tx = inWindow ? QUIZ_PAD_POS[padI][0] * 0.9 + Math.sin(i) * 1.5 : Math.sin(i) * 1.2;
+        tz = inWindow ? QUIZ_PAD_POS[padI][1] * 0.9 + Math.cos(i) * 1.5 : Math.cos(i) * 1.2;
+      }
+      // 씨름판·꼬리: 판 안에서 돌아다니며 밀치기를 누른다
+      if (room.levelId === 'sumo' || room.levelId === 'tail') {
+        const R = room.levelId === 'sumo' ? (lt > 50 ? 3.4 : lt > 28 ? 5.6 : 7.5) : 10;
+        const a = lt * (0.5 + (i % 5) * 0.15) + i * 1.3;
+        tx = Math.sin(a) * R * (0.3 + (i % 4) * 0.2); tz = Math.cos(a * 1.3) * R * (0.3 + (i % 3) * 0.25);
+      }
       // 가운데 기둥에서는 떨어져 선다
       if (Math.hypot(tx, tz) < 1.6) { const a = i * 2.4; tx += Math.sin(a) * 1.0; tz += Math.cos(a) * 1.0; }
       let jmp = 0, hold = false;
@@ -112,7 +128,8 @@ const timer = setInterval(() => {
       if (hold) jmp = 0;
       const dx = tx - b.x, dz = tz - b.z, dl = Math.hypot(dx, dz);
       const sp = dl > 0.3 ? 1 : 0;
-      b.socket.emit('in', [++b.seq, Math.round((dx / (dl || 1)) * 127 * sp), Math.round((dz / (dl || 1)) * 127 * sp), jmp]);
+      const act = (room.levelId === 'sumo' || room.levelId === 'tail') && Math.sin(lt * 3 + i) > 0.7 ? 2 : 0;
+      b.socket.emit('in', [++b.seq, Math.round((dx / (dl || 1)) * 127 * sp), Math.round((dz / (dl || 1)) * 127 * sp), jmp | act]);
       continue;
     }
     const mz = GAME === 'race' ? 127 : Math.round(Math.cos(t * 0.5 + i * 2) * 110);

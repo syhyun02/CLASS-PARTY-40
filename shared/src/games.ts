@@ -1,7 +1,9 @@
 import type { LevelDef } from './level';
 import { buildLobby } from './levels/lobby';
 import { buildRace } from './levels/race';
-import { buildBomb, buildLast, buildSpinner, buildTiles, buildTreasure } from './levels/arenas';
+import { buildBomb, buildLast, buildSpinner, buildSumo, buildTail, buildTiles, buildTreasure } from './levels/arenas';
+import { buildMaze } from './levels/maze';
+import { buildQuiz } from './levels/quiz';
 
 export type GameMode = 'play' | 'chem';
 export type Genre = 'race' | 'survival' | 'battle' | 'collect' | 'quiz';
@@ -16,12 +18,10 @@ export interface GameMeta {
   howTo: string;
   timeLimit: number; // 초
   implemented: boolean;
+  /** 특수 행동 버튼을 쓰는 게임이면 버튼에 적을 이름 */
+  action?: string;
   buildLevel: (seed: number) => LevelDef;
 }
-
-const todo = (id: string, name: string, emoji: string, genre: Genre, howTo: string): GameMeta => ({
-  id, name, emoji, genre, modes: ['play', 'chem'], howTo, timeLimit: 90, implemented: false, buildLevel: buildRace,
-});
 
 export const GAMES: GameMeta[] = [
   {
@@ -36,10 +36,22 @@ export const GAMES: GameMeta[] = [
     id: 'spinner', name: '빙글빙글 원판', emoji: '🌀', genre: 'survival', modes: ['play', 'chem'],
     howTo: '낮은 봉은 점프! 높은 봉은 점프 금지!', timeLimit: 80, implemented: true, buildLevel: buildSpinner,
   },
-  todo('sumo', '밀어내기 아레나', '💥', 'battle', '친구를 경기장 밖으로 밀어내요'),
-  todo('maze', '움직이는 미로', '🧩', 'race', '바뀌는 미로에서 출구를 찾아요'),
-  todo('tail', '꼬리 지키기', '🦊', 'battle', '꼬리를 빼앗고 끝까지 지켜요'),
-  todo('answer', '정답 발판 배틀', '✅', 'quiz', '정답 발판 위로 달려가요'),
+  {
+    id: 'sumo', name: '영차영차 씨름판', emoji: '💥', genre: 'battle', modes: ['play', 'chem'], action: '밀기',
+    howTo: '밀기 버튼으로 친구를 판 밖으로 밀어내요!', timeLimit: 70, implemented: true, buildLevel: buildSumo,
+  },
+  {
+    id: 'maze', name: '열렸다 닫혔다 미로', emoji: '🧩', genre: 'race', modes: ['play', 'chem'],
+    howTo: '문이 열릴 때를 노려 출구까지 달려요!', timeLimit: 100, implemented: true, buildLevel: buildMaze,
+  },
+  {
+    id: 'tail', name: '꼬리 지키기', emoji: '🦊', genre: 'battle', modes: ['play', 'chem'], action: '밀기',
+    howTo: '꼬리 가진 친구에게 닿으면 내 것! 오래 지킬수록 점수가 올라요', timeLimit: 60, implemented: true, buildLevel: buildTail,
+  },
+  {
+    id: 'answer', name: '정답 발판 배틀', emoji: '✅', genre: 'quiz', modes: ['play', 'chem'],
+    howTo: '문제를 보고 정답 발판으로! 오답 발판은 사라져요', timeLimit: 86, implemented: true, buildLevel: buildQuiz,
+  },
   {
     id: 'bomb', name: '펑펑 광장', emoji: '💣', genre: 'survival', modes: ['play', 'chem'],
     howTo: '빨간 원 밖으로 피하거나 벽 뒤에 숨어요!', timeLimit: 76, implemented: true, buildLevel: buildBomb,

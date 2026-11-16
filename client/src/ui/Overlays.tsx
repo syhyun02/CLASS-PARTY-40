@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { GAMES, getGame, type RoomState, type RoundRow } from '@shared';
+import { GAMES, QUIZ_PADS, getGame, type RoomState, type RoundRow } from '@shared';
 import { net } from '../game/net';
 import { setQuality, useStore, type Quality } from '../game/store';
 import { useSecondsLeft, useTicker } from './hooks';
@@ -138,8 +138,86 @@ export function CollectHud({ room, myId }: { room: RoomState; myId: number | nul
   );
 }
 
+const Timer = ({ left, urgent = 10 }: { left: number; urgent?: number }) => (
+  <div className={`chip tabular-nums text-lg ${left <= urgent ? 'animate-wiggle !bg-bubble !text-white' : ''}`}>⏱ {Math.floor(left / 60)}:{String(Math.floor(left % 60)).padStart(2, '0')}</div>
+);
+const HUD_BAR = 'pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-2 p-3';
+
+/** 꼬리 지키기: 내가 꼬리를 가졌는지, 모은 시간, 꼬리 수 */
+export function TailHud({ room, myId }: { room: RoomState; myId: number | null }) {
+  const left = useSecondsLeft(4);
+  const game = useStore((s) => s.game);
+  const has = myId !== null && (game?.tails ?? []).includes(myId);
+  const mine = game?.scores?.find((s) => s[0] === myId)?.[1] ?? 0;
+  return (
+    <div className={HUD_BAR} style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}>
+      <div className="chip tabular-nums">{myId !== null ? <>🦊 꼬리 <b className="text-xl text-bubble">{mine}</b>초</> : '🦊 꼬리 지키기'}</div>
+      <div className="flex flex-col items-center gap-1">
+        <Timer left={left} />
+        {myId !== null && (
+          <div key={String(has)} className={`chip animate-pop !text-base ${has ? '!bg-lemon' : '!bg-white'}`}>
+            {has ? '꼬리가 있어요! 도망쳐요 🏃' : '꼬리 가진 친구에게 닿아요!'}
+          </div>
+        )}
+      </div>
+      <div className="chip tabular-nums">🦊 {(game?.tails ?? []).length}개</div>
+    </div>
+  );
+}
+
+/** 정답 발판: 문제, 보기(발판 색), 남은 시간, 채점 결과 */
+export function QuizHud({ myId }: { room: RoomState; myId: number | null }) {
+  useTicker(10);
+  const game = useStore((s) => s.game);
+  const quiz = net.level?.quiz ?? [];
+  const t = net.levelTime();
+  let qi = -1;
+  for (let i = 0; i < quiz.length; i++) if (quiz[i].at <= t) qi = i;
+  const q = qi >= 0 ? quiz[qi] : null;
+  const mine = game?.scores?.find((s) => s[0] === myId)?.[1] ?? 0;
+  const revealed = !!q && t >= q.revealAt;
+  const graded = game?.quiz?.index === qi ? game.quiz : null;
+  const ok = graded && myId !== null ? graded.correct.includes(myId) : null;
+  const left = q ? Math.max(0, q.revealAt - t) : 0;
+  const flashing = !!q?.flash && t - q.at < 3.5;
+  return (
+    <div className={HUD_BAR} style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}>
+      <div className="chip tabular-nums">{myId !== null ? <>✅ <b className="text-xl text-bubble">{mine}</b> / {quiz.length}</> : '✅ 정답 발판'}</div>
+      {q ? (
+        <div className="card flex w-[min(520px,62vw)] flex-col items-center gap-1 !p-2 text-center">
+          <div className="text-xs opacity-60">문제 {qi + 1} / {quiz.length}</div>
+          {q.flash && (flashing
+            ? <div className="font-display text-3xl tracking-wider">{q.flash}</div>
+            : !revealed && <div className="font-display text-xl opacity-50">(가려졌어요)</div>)}
+          {q.word && (
+            <div className="font-display text-5xl leading-none" style={{ color: q.color, WebkitTextStroke: '6px #2b2145', paintOrder: 'stroke fill' }}>{q.word}</div>
+          )}
+          {(!q.flash || !flashing) && <div className="whitespace-pre-line font-display text-lg leading-tight sm:text-2xl">{q.text}</div>}
+          <div className="grid w-full grid-cols-4 gap-1">
+            {q.options.map((o, i) => (
+              <div key={i} className={`flex items-center justify-center gap-1 rounded-xl border-4 px-1 py-0.5 font-display text-lg ${revealed ? (i === q.answer ? 'bg-mint' : 'opacity-35') : 'bg-white'}`} style={{ borderColor: QUIZ_PADS[i].color }}>
+                <span className="truncate">{o}</span>
+              </div>
+            ))}
+          </div>
+          {!revealed ? (
+            <div className="h-2 w-full overflow-hidden rounded-full bg-ink/10">
+              <div className={`h-full rounded-full ${left < 3 ? 'bg-bubble' : 'bg-grape'}`} style={{ width: `${(left / (q.revealAt - q.at)) * 100}%` }} />
+            </div>
+          ) : ok !== null && (
+            <div key={qi} className={`animate-pop font-display text-2xl ${ok ? 'text-[#2f9e44]' : 'text-bubble'}`}>{ok ? '⭕ 정답!' : '❌ 아쉬워요'}</div>
+          )}
+        </div>
+      ) : <div className="chip">곧 첫 문제가 나와요</div>}
+      <div className="w-16" />
+    </div>
+  );
+}
+
 /** 게임 장르에 맞는 경기 중 HUD */
 export function GameHud({ room, myId }: { room: RoomState; myId: number | null }) {
+  if (room.gameId === 'tail') return <TailHud room={room} myId={myId} />;
+  if (room.gameId === 'answer') return <QuizHud room={room} myId={myId} />;
   const genre = getGame(room.gameId ?? '')?.genre;
   if (genre === 'race') return <RaceHud room={room} myId={myId} />;
   if (genre === 'collect') return <CollectHud room={room} myId={myId} />;

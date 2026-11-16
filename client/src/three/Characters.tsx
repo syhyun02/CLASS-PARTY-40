@@ -1,7 +1,7 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { FLAG_DONE, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_STUN, MAX_PLAYERS } from '@shared';
+import { FLAG_ACT, FLAG_DONE, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_STUN, MAX_PLAYERS } from '@shared';
 import { net } from '../game/net';
 import { useStore } from '../game/store';
 
@@ -24,7 +24,9 @@ const col = new THREE.Color();
 const col2 = new THREE.Color();
 const WHITE = new THREE.Color('#ffffff');
 const LEAF = new THREE.Color('#40c057');
-const LIMBS = 8; // 발 2 + 손 2 + 배 1 + 머리 장식 3
+const LIMBS = 11; // 발 2 + 손 2 + 배 1 + 머리 장식 3 + 꼬리 3
+const TAIL = new THREE.Color('#ff922b');
+const TAIL_TIP = new THREE.Color('#fff4e6');
 const ID_Q = new THREE.Quaternion();
 
 function part(mesh: THREE.InstancedMesh, i: number, x: number, y: number, z: number, sx: number, sy: number, sz: number) {
@@ -66,6 +68,7 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
   const anims = useRef(new Map<number, Anim>());
   const sprites = useRef(new Map<number, { sprite: THREE.Sprite; name: string }>());
   const camera = useThree((st) => st.camera);
+  const tailCache = useRef<{ src: number[] | undefined; set: Set<number> | null }>({ src: undefined, set: null });
 
   useEffect(() => () => { for (const t of sprites.current.values()) { t.sprite.material.map?.dispose(); t.sprite.material.dispose(); } }, []);
 
@@ -80,6 +83,9 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
     let podium: number[] = [];
     if (room?.phase === 'final') podium = [...room.players].sort((a, b) => b.score - a.score).slice(0, 3).map((p) => p.id);
 
+    const tailIds = st.game?.tails;
+    if (tailIds !== tailCache.current.src) tailCache.current = { src: tailIds, set: tailIds ? new Set(tailIds) : null };
+    const tails = room?.phase === 'playing' ? tailCache.current.set : null;
     const used = new Set<number>();
     let n = 0;
     let meShown = false;
@@ -135,14 +141,28 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       const handUp = win ? 0.45 + Math.sin(time * 10 + p.id) * 0.06 : airborne || stun ? 0.32 : lose ? -0.12 : 0;
       part(limbs.current, L, -0.19, 0.1 + lift + tuck, stride + 0.04, 0.15, 0.11, 0.2);
       part(limbs.current, L + 1, 0.19, 0.1 + lift2 + tuck, -stride + 0.04, 0.15, 0.11, 0.2);
-      part(limbs.current, L + 2, -0.49, 0.56 + handUp, -stride * 0.9, 0.13, 0.13, 0.13);
-      part(limbs.current, L + 3, 0.49, 0.56 + handUp, stride * 0.9, 0.13, 0.13, 0.13);
+      if (p.flags & FLAG_ACT) {
+        // 밀치기: 두 손을 앞으로 쭉 뻗는다
+        part(limbs.current, L + 2, -0.24, 0.62, 0.62, 0.16, 0.16, 0.16);
+        part(limbs.current, L + 3, 0.24, 0.62, 0.62, 0.16, 0.16, 0.16);
+      } else {
+        part(limbs.current, L + 2, -0.49, 0.56 + handUp, -stride * 0.9, 0.13, 0.13, 0.13);
+        part(limbs.current, L + 3, 0.49, 0.56 + handUp, stride * 0.9, 0.13, 0.13, 0.13);
+      }
       for (let k = 0; k < 4; k++) limbs.current.setColorAt(L + k, col2);
 
       // 머리 장식: 번호마다 다른 모양(귀, 방울, 볏, 양갈래, 새싹)이라 멀리서도 구별된다
       const bob = Math.sin(a.phase * 2) * 0.03 * run + (airborne ? 0.05 : 0);
       const kind = p.id % 5;
-      for (let k = 5; k < 8; k++) limbs.current.setMatrixAt(L + k, ZERO);
+      for (let k = 5; k < LIMBS; k++) limbs.current.setMatrixAt(L + k, ZERO);
+      // 꼬리(꼬리 지키기): 뒤로 살랑거리는 주황 꼬리
+      if (tails && tails.has(p.id)) {
+        const wag = Math.sin(time * 9 + p.id) * 0.14;
+        part(limbs.current, L + 8, wag * 0.4, 0.42, -0.5, 0.16, 0.16, 0.2);
+        part(limbs.current, L + 9, wag, 0.56, -0.76, 0.19, 0.19, 0.22);
+        part(limbs.current, L + 10, wag * 1.6, 0.74, -0.98, 0.14, 0.14, 0.16);
+        limbs.current.setColorAt(L + 8, TAIL); limbs.current.setColorAt(L + 9, TAIL); limbs.current.setColorAt(L + 10, TAIL_TIP);
+      }
       if (kind === 0) {
         part(limbs.current, L + 5, -0.27, 1.1 + bob, 0, 0.14, 0.14, 0.1);
         part(limbs.current, L + 6, 0.27, 1.1 + bob, 0, 0.14, 0.14, 0.1);

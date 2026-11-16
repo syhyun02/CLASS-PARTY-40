@@ -1,4 +1,5 @@
 import { TICK_RATE, rankPoints } from '@shared';
+import { createPusher } from './push';
 import type { GameCtx, MinigameRuntime, MinigameServer, RoundOutcome } from './types';
 
 const GRACE = 5 * TICK_RATE; // 연결이 끊긴 채 이만큼 지나면 탈락으로 본다
@@ -7,13 +8,14 @@ const GRACE = 5 * TICK_RATE; // 연결이 끊긴 채 이만큼 지나면 탈락�
  * 생존형 미니게임 공통 규칙: 떨어지면 탈락, 오래 버틸수록 높은 순위.
  * 무엇이 플레이어를 떨어뜨리는지(사라지는 발판, 회전봉 등)는 맵 데이터가 정한다.
  */
-export function survivalGame(id: string): MinigameServer {
+export function survivalGame(id: string, opts: { push?: boolean } = {}): MinigameServer {
   return {
     id,
     create(ctx: GameCtx): MinigameRuntime {
       const outTick = new Map<number, number>();
       const offline = new Map<number, number>();
       const started = ctx.players.length;
+      const push = opts.push ? createPusher(ctx, (p) => !p.out) : null;
 
       const eliminate = (id: number) => {
         const p = ctx.players.find((x) => x.id === id);
@@ -28,6 +30,7 @@ export function survivalGame(id: string): MinigameServer {
 
       return {
         onTick() {
+          push?.();
           for (const p of ctx.players) {
             if (p.out) continue;
             if (p.state.falls > 0) { eliminate(p.id); continue; }

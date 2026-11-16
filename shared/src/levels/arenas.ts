@@ -198,3 +198,38 @@ export function buildTreasure(seed: number): LevelDef {
   l.spawnSpacing = 1.4;
   return l;
 }
+
+/**
+ * 밀어내기 "영차영차 씨름판"
+ * 밀기 버튼(쿨타임 있음)으로 앞에 있는 친구를 밀어낸다. 판이 두 번 줄어든다.
+ */
+export function buildSumo(_seed: number): LevelDef {
+  const l = base('sumo', '영차영차 씨름판');
+  l.tiles = [
+    disc(10, -0.08, '#5cc8ff', T0 + 26),
+    disc(7.5, -0.04, '#b693ff', T0 + 48),
+    disc(5, 0, '#ff8fc7'),
+  ];
+  l.spawnRing = 6.5;
+  return l;
+}
+
+/**
+ * 꼬리 지키기 "꼬리 지키기"
+ * 넓은 마당에 숨을 곳이 될 상자가 놓여 있다. 떨어지면 가운데에서 다시 시작한다.
+ */
+export function buildTail(seed: number): LevelDef {
+  const r = rng(seed);
+  const l = base('tail', '꼬리 지키기');
+  l.noRespawn = false;
+  l.killY = -7;
+  l.statics.push({ p: [0, -0.5, 0], h: [13, 0.5, 13], color: '#ffd04d' });
+  // 돌아서 도망칠 수 있는 상자 8개(가운데 출발 지점은 비워 둔다)
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * 6.283 + r() * 0.4, d = 6 + (i % 2) * 3.4;
+    const w = 1 + r() * 0.9, dpt = 1 + r() * 0.9;
+    l.statics.push({ p: [Math.sin(a) * d, 1.1, Math.cos(a) * d], h: [w, 1.1, dpt], color: ['#ff8fc7', '#5cc8ff', '#5fe0a8', '#b693ff'][i % 4] });
+  }
+  l.spawnRing = 3.6;
+  return l;
+}

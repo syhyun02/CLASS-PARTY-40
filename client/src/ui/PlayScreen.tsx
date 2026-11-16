@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { PLAYER_COLORS } from '@shared';
+import { PLAYER_COLORS, getGame } from '@shared';
 import { net } from '../game/net';
 import { useStore } from '../game/store';
 import { Scene } from '../three/Scene';
@@ -24,7 +24,7 @@ export function PlayScreen() {
   return (
     <div className="fixed inset-0 overflow-hidden">
       <Scene spectator={spectating} />
-      {!spectating && <Controls />}
+      {!spectating && <Controls action={phase === 'playing' ? getGame(room.gameId ?? '')?.action : undefined} />}
 
       {phase === 'lobby' && (
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-col items-center gap-2 p-3">

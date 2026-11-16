@@ -78,6 +78,7 @@ export const FLAG_STUN = 2;
 export const FLAG_DONE = 4; // 완주/탈락
 export const FLAG_HIDDEN = 8; // 관전 중(그리지 않음)
 export const FLAG_MOVING = 16;
+export const FLAG_ACT = 32; // 방금 밀치기를 썼다(동작 표시용)
 const REC = 9;
 
 export interface SnapPlayer { id: number; x: number; y: number; z: number; yaw: number; flags: number }
@@ -117,11 +118,15 @@ export function decodeSnapshot(buf: ArrayBuffer): { tick: number; players: SnapP
   return { tick, players };
 }
 
-/** 미니게임별 실시간 상태(서버 → 전원). 지금은 보물 게임만 쓴다. */
+/** 미니게임별 실시간 상태(서버 → 전원). 게임마다 필요한 칸만 채운다. */
 export interface CollectState {
   /** 이미 누가 가져간 보물 번호 */
-  taken: number[];
+  taken?: number[];
   /** [플레이어 번호, 점수] */
-  scores: [number, number][];
+  scores?: [number, number][];
+  /** 꼬리를 가진 플레이어 번호 */
+  tails?: number[];
+  /** 가장 최근에 채점한 문제 번호와 맞힌 사람 */
+  quiz?: { index: number; correct: number[] };
 }
 export interface GameStateMsg { key: string; state: CollectState | null }

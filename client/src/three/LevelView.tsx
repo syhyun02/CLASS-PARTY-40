@@ -1,7 +1,7 @@
 import { useFrame } from '@react-three/fiber';
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { moverOffset, sweeperAngle, type LevelDef } from '@shared';
+import { QUIZ_PADS, QUIZ_PAD_POS, moverOffset, sweeperAngle, type LevelDef, type Tile } from '@shared';
 import { net } from '../game/net';
 import { useStore } from '../game/store';
 
@@ -218,6 +218,16 @@ function Decor({ level, low }: { level: LevelDef; low: boolean }) {
 
 const WARN = new THREE.Color('#ffffff');
 
+/** 발판이 지금 얼마나 '사라져' 있는지: 0 = 멀쩡, 1 = 완전히 없음. 사라질 때와 돌아올 때 0.4초에 걸쳐 변한다. */
+function goneAmount(b: Tile, t: number): number {
+  if (t >= b.offAt) return Math.min(1, (t - b.offAt) / 0.4);
+  if (b.gaps) for (const g of b.gaps) {
+    if (t >= g[0] && t < g[1]) return Math.min(1, (t - g[0]) / 0.4);
+    if (t >= g[1] && t < g[1] + 0.4) return 1 - (t - g[1]) / 0.4;
+  }
+  return 0;
+}
+
 /** 사라지는 발판: 사라지기 전에 깜빡이며 떨다가, 시간이 되면 아래로 떨어진다. */
 function Tiles({ level, low }: { level: LevelDef; low: boolean }) {
   const all = level.tiles ?? [];
@@ -235,12 +245,11 @@ function Tiles({ level, low }: { level: LevelDef; low: boolean }) {
   useFrame(() => {
     const t = net.levelTime();
     boxes.forEach((b, i) => {
-      const gone = t - b.offAt;
+      const k = goneAmount(b, t);
       let y = b.p[1], sc = 1, dx = 0;
-      if (gone >= 0) {
-        const k = Math.min(1, gone / 0.4);
+      if (k > 0) {
         y -= k * k * 4; sc = 1 - k;
-        mesh.current.setColorAt(i, WARN);
+        mesh.current.setColorAt(i, col.copy(base[i]).lerp(WARN, k));
       } else if (t >= b.warnAt) {
         // 남은 시간이 줄수록 더 빨리 깜빡인다
         const left = b.offAt - t;
@@ -355,6 +364,60 @@ function Bombs({ level }: { level: LevelDef }) {
       <instancedMesh ref={blast} args={[sphere, undefined, MAX]} frustumCulled={false} renderOrder={4}>
         <meshBasicMaterial transparent opacity={0.7} depthWrite={false} />
       </instancedMesh>
+    </group>
+  );
+}
+
+/** 정답 발판 위에 떠 있는 보기 팻말. 문제가 바뀔 때만 다시 그린다. */
+function QuizSigns({ level }: { level: LevelDef }) {
+  const quiz = level.quiz ?? [];
+  const group = useRef<THREE.Group>(null!);
+  const signs = useMemo(() => QUIZ_PADS.map(() => {
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 256;
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return { c, tex };
+  }), [level]);
+  const shown = useRef('');
+  useEffect(() => () => signs.forEach((s) => s.tex.dispose()), [signs]);
+
+  useFrame((state) => {
+    if (!quiz.length) return;
+    const t = net.levelTime();
+    let qi = -1;
+    for (let i = 0; i < quiz.length; i++) if (quiz[i].at <= t) qi = i;
+    const q = qi >= 0 ? quiz[qi] : null;
+    const revealed = !!q && t >= q.revealAt;
+    const key = `${qi}:${revealed}`;
+    if (key !== shown.current) {
+      shown.current = key;
+      signs.forEach((s, i) => {
+        const g = s.c.getContext('2d')!;
+        g.clearRect(0, 0, 512, 256);
+        const right = revealed && q!.answer === i;
+        g.fillStyle = revealed && !right ? 'rgba(43,33,69,0.45)' : '#ffffff';
+        g.beginPath(); g.roundRect(16, 16, 480, 224, 56); g.fill();
+        g.lineWidth = 16; g.strokeStyle = right ? '#2f9e44' : QUIZ_PADS[i].color; g.stroke();
+        g.fillStyle = revealed && !right ? '#ffffff' : '#2b2145';
+        g.textAlign = 'center'; g.textBaseline = 'middle';
+        const text = q ? q.options[i] : QUIZ_PADS[i].name;
+        g.font = `700 ${text.length > 4 ? 84 : 124}px Jua, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif`;
+        g.fillText(right ? `⭕ ${text}` : text, 256, 134);
+        s.tex.needsUpdate = true;
+      });
+    }
+    group.current.children.forEach((m, i) => { m.position.y = 3.1 + Math.sin(state.clock.elapsedTime * 2 + i) * 0.12; });
+  });
+
+  if (!quiz.length) return null;
+  return (
+    <group ref={group}>
+      {signs.map((s, i) => (
+        <sprite key={i} position={[QUIZ_PAD_POS[i][0], 3.1, QUIZ_PAD_POS[i][1]]} scale={[3.6, 1.8, 1]} renderOrder={6}>
+          <spriteMaterial map={s.tex} transparent depthWrite={false} />
+        </sprite>
+      ))}
     </group>
   );
 }
@@ -480,6 +543,7 @@ export function LevelView({ level }: { level: LevelDef }) {
       <instancedMesh ref={statics} args={[box, blockMat, Math.max(1, level.statics.length)]} count={level.statics.length} receiveShadow={shadow} />
       <Tiles level={level} low={low} />
       <Bombs level={level} />
+      <QuizSigns level={level} />
       <Items level={level} />
       <instancedMesh ref={strips} args={[box, undefined, Math.max(1, cps.length)]} count={cps.length}>
         <meshBasicMaterial color="#ffffff" transparent opacity={0.85} />

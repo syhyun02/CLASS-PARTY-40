@@ -38,6 +38,14 @@ export interface Tile extends Box {
   shape: 'box' | 'disc'; // disc는 h = [반지름, 절반 높이, 반지름]
   warnAt: number; // 깜빡이기 시작하는 시각(초)
   offAt: number; // 사라지는 시각(초). 사라지지 않으면 NEVER
+  /** 잠깐 사라졌다 돌아오는 구간 [시작, 끝] 목록(예고 없이 사라진다) */
+  gaps?: [number, number][];
+}
+
+export function tileOn(t: Tile, time: number): boolean {
+  if (time >= t.offAt) return false;
+  if (t.gaps) for (const g of t.gaps) if (time >= g[0] && time < g[1]) return false;
+  return true;
 }
 export const NEVER = 1e9;
 
@@ -47,6 +55,21 @@ export interface Bomb {
   at: number; // 나타나는 시각(초)
   fuse: number;
   radius: number;
+}
+
+/** 정답 발판 문제 하나. 보기 4개가 발판 4개(tiles[0..3])에 순서대로 대응한다. */
+export interface QuizQ {
+  at: number; // 문제가 나오는 시각(초)
+  revealAt: number; // 오답 발판이 사라지는 시각
+  endAt: number; // 발판이 돌아오는 시각
+  text: string;
+  /** 처음 몇 초만 보여 주고 가리는 내용(기억력 문제) */
+  flash?: string;
+  /** 색 맞히기 문제: 크게 보여 줄 낱말과 그 글자의 색 */
+  word?: string;
+  color?: string;
+  options: string[];
+  answer: number;
 }
 
 /** 정해진 시각에 나타나는 보물. 먼저 닿은 사람이 가져간다(서버 판정). */
@@ -76,6 +99,7 @@ export interface LevelDef {
   /** 터지는 시각 순서로 정렬되어 있어야 한다 */
   bombs?: Bomb[];
   items?: Item[];
+  quiz?: QuizQ[];
   /** true면 떨어져도 부활하지 않는다(생존 게임) */
   noRespawn?: boolean;
   /** 지정하면 격자 대신 원형으로 둘러서서 출발한다 */

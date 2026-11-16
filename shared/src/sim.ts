@@ -3,7 +3,7 @@ import {
   AIR_ACCEL, COYOTE_TICKS, DT, GRAVITY, GROUND_ACCEL, JUMP_BUFFER_TICKS, JUMP_VELOCITY,
   MOVE_SPEED, PLAYER_CENTER_Y, PLAYER_HALF_HEIGHT, PLAYER_RADIUS, STUN_TICKS,
 } from './constants';
-import { inBox, moverOffset, spawnPoint, sweeperAngle, sweeperSpeed, type LevelDef } from './level';
+import { inBox, moverOffset, spawnPoint, sweeperAngle, sweeperSpeed, tileOn, type LevelDef } from './level';
 
 type Rapier = typeof RAPIER_NS;
 
@@ -126,7 +126,7 @@ export class SimWorld {
     const tiles = this.level.tiles;
     if (tiles) {
       for (let i = 0; i < tiles.length; i++) {
-        const on = this.time < tiles[i].offAt;
+        const on = tileOn(tiles[i], this.time);
         if (on !== this.tileOn[i]) { this.tileOn[i] = on; this.tileCols[i].setEnabled(on); }
       }
     }

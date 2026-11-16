@@ -9,7 +9,7 @@ const R = 56; // 조이스틱 반지름(px)
  * 터치: 화면 왼쪽 = 누른 자리에 생기는 조이스틱, 오른쪽 = 점프 버튼, 빈 곳을 끌면 카메라 회전
  * PC: WASD 이동, Space 점프, 마우스 끌기로 카메라 회전
  */
-export function Controls({ showAction = false }: { showAction?: boolean }) {
+export function Controls({ action }: { action?: string }) {
   const isTouch = useStore((s) => s.isTouch);
   const [stick, setStick] = useState<{ x: number; y: number; dx: number; dy: number } | null>(null);
   const stickId = useRef<number | null>(null);
@@ -75,14 +75,14 @@ export function Controls({ showAction = false }: { showAction?: boolean }) {
       )}
       {isTouch ? (
         <div className="absolute bottom-8 right-8 flex items-end gap-4" style={{ paddingRight: 'env(safe-area-inset-right)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-          {showAction && (
-            <button {...hold('action')} className="h-16 w-16 rounded-full bg-lemon font-display text-ink shadow-pop active:translate-y-1 active:shadow-none">밀기</button>
+          {action && (
+            <button {...hold('action')} className="h-20 w-20 rounded-full bg-lemon font-display text-xl text-ink shadow-pop active:translate-y-1 active:shadow-none">{action}</button>
           )}
           <button {...hold('jump')} className="h-24 w-24 rounded-full bg-bubble font-display text-2xl text-white shadow-pop active:translate-y-1 active:shadow-none">점프</button>
         </div>
       ) : (
         <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 chip opacity-80">
-          WASD 이동 · Space 점프 · 마우스 끌기 = 카메라
+          WASD 이동 · Space 점프{action ? ` · Shift ${action}` : ''} · 마우스 끌기 = 카메라
         </div>
       )}
     </div>
