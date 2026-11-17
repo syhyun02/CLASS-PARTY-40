@@ -4,7 +4,7 @@
  * 서버 틱 시간, CPU, 메모리, 통신량, 왕복 지연, 스냅샷 수신 주기를 출력한다.
  */
 import { io, type Socket } from 'socket.io-client';
-import { CHEM_DOOR_X, DT, QUIZ_PAD_POS, ballPos, buildLevel, chemRowZ, sweeperAngle, sweeperSpeed, TICK_RATE, decodeSnapshot, decodeSelf, fromB64, type CreateRes, type JoinRes, type RoomState, type SelfMsg } from '@shared';
+import { CHEM_DOOR_X, DT, HOVER, QUIZ_PAD_POS, ballPos, buildLevel, moverOffset, chemRowZ, sweeperAngle, sweeperSpeed, TICK_RATE, decodeSnapshot, decodeSelf, fromB64, type CreateRes, type JoinRes, type RoomState, type SelfMsg } from '@shared';
 
 const arg = (name: string, def: string) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -128,7 +128,7 @@ const timer = setInterval(() => {
       }
       let ballJump = 0;
       // 굴러오는 공: 1초 안에 내 자리를 지나갈 공이 있으면 작은 공은 뛰어넘고 큰 공은 옆으로 비킨다
-      if (lv.balls) {
+      if (lv.balls && room.levelId !== 'hover') {
         tx = Math.sin(i * 2.4) * 3; tz = Math.cos(i * 2.4) * 3;
         for (const bl of lv.balls) {
           if (bl.at > lt + 1.2) break;
@@ -143,6 +143,26 @@ const timer = setInterval(() => {
         }
         const rr = Math.hypot(tx, tz), lim = lt > 50 ? 6 : 9;
         if (rr > lim) { tx *= lim / rr; tz *= lim / rr; }
+      }
+      // 호버보드: 보드 앞쪽 가운데에 서 있다가, 낮은 봉·공은 점프, 구멍 벽은 가까운 구멍으로 비킨다
+      if (room.levelId === 'hover' && lv.movers[0]) {
+        const cz = lv.movers[0].p[2] + moverOffset(lv.movers[0], lt)[2];
+        tx = Math.sin(i * 1.7) * 3.5; tz = cz + 2 + Math.cos(i * 1.3) * 2;
+        for (const ob of lv.obstacles ?? []) {
+          const ahead = ob.z - b.z;
+          if (ahead < -0.6 || ahead > 9) continue;
+          if (ob.kind === 'bar' && ahead < 1.2 && ahead > 0.2 && b.grounded) ballJump = 1;
+          if (ob.kind === 'holes' && ob.gaps) {
+            const g = ob.gaps.reduce((a, c) => (Math.abs(c - b.x) < Math.abs(a - b.x) ? c : a), ob.gaps[0]);
+            tx = g + Math.sin(i) * 0.5;
+          }
+        }
+        for (const bl of lv.balls ?? []) {
+          if (bl.at > lt + 1 || lt > bl.end) continue;
+          const [bx] = ballPos(bl, lt);
+          if (Math.abs(bl.z - b.z) < 1.2 && (b.x - bx) * bl.dx > 0 && Math.abs(b.x - bx) < 1.6 && b.grounded) ballJump = 1;
+        }
+        tz = Math.max(cz - HOVER.halfL + 1.5, Math.min(cz + HOVER.halfL - 1.5, tz));
       }
       // 가운데 기둥에서는 떨어져 선다
       if (Math.hypot(tx, tz) < 1.6) { const a = i * 2.4; tx += Math.sin(a) * 1.0; tz += Math.cos(a) * 1.0; }

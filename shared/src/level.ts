@@ -13,6 +13,11 @@ export interface Mover extends Box {
   travel: Vec3; // 중심에서 한쪽 끝까지의 이동 벡터
   period: number; // 왕복 주기(초)
   phase: number; // 0~1
+  /**
+   * 한 방향으로만 가는 탈것(호버보드). start초부터 duration초 동안 travel만큼 일정한 속도로 간다.
+   * 탈것 위에서 점프해도 탈것과 함께 움직인다.
+   */
+  ride?: { start: number; duration: number };
 }
 
 /** Y축으로 회전하는 봉. 맞으면 날아가서 넘어진다. */
@@ -23,6 +28,8 @@ export interface Sweeper {
   speed: number; // rad/s
   phase: number; // rad
   color?: string;
+  /** 받침 없이 공중에 떠 있는 봉(호버보드 코스처럼 바닥이 지나가는 곳) */
+  float?: boolean;
   /** 이 시각(초) 전에는 멈춰 있고 판정도 없다 */
   startAt?: number;
   /** 시간이 갈수록 빨라지는 정도(rad/s²)와 최고 속도 */
@@ -128,6 +135,8 @@ export interface LevelDef {
   items?: Item[];
   quiz?: QuizQ[];
   signs?: QuizSign[];
+  /** 호버보드 코스의 장애물 목록(봇과 화면 안내용). gaps는 구멍 벽의 구멍 가운데 x */
+  obstacles?: { kind: 'bar' | 'holes' | 'sweeper' | 'balls'; z: number; gaps?: number[]; low?: boolean }[];
   /** 눈에만 보이는 빛의 막(충돌 없음). 화학 미로의 문 */
   curtains?: Box[];
   /** 경기 시간(초). 지정하면 게임 기본 제한 시간 대신 쓴다. */
@@ -148,6 +157,10 @@ export interface LevelDef {
 }
 
 export function moverOffset(m: Mover, t: number): Vec3 {
+  if (m.ride) {
+    const k = Math.max(0, Math.min(1, (t - m.ride.start) / m.ride.duration));
+    return [m.travel[0] * k, m.travel[1] * k, m.travel[2] * k];
+  }
   const s = Math.sin((t / m.period + m.phase) * Math.PI * 2);
   return [m.travel[0] * s, m.travel[1] * s, m.travel[2] * s];
 }

@@ -22,6 +22,7 @@ export interface PlayerState {
   falls: number;
   bomb: number; // 다음에 처리할 폭탄 번호(같은 폭탄에 두 번 맞거나 건너뛰지 않게)
   shove: number; // 밀쳐져서 비틀거리는 남은 틱(넘어지지는 않지만 잠깐 조작이 안 된다)
+  ride: number; // 마지막으로 올라탄 탈것(호버보드). 점프 중에도 함께 움직인다. -1 없음
 }
 
 export interface PlayerInput {
@@ -36,7 +37,7 @@ export interface PlayerInput {
 export const NO_INPUT: PlayerInput = { mx: 0, mz: 0, jump: false, action: false };
 
 export const STATE_KEYS: (keyof PlayerState)[] = [
-  'x', 'y', 'z', 'vx', 'vy', 'vz', 'yaw', 'grounded', 'stun', 'coyote', 'jumpBuf', 'jumpHeld', 'mover', 'cp', 'falls', 'bomb', 'shove',
+  'x', 'y', 'z', 'vx', 'vy', 'vz', 'yaw', 'grounded', 'stun', 'coyote', 'jumpBuf', 'jumpHeld', 'mover', 'cp', 'falls', 'bomb', 'shove', 'ride',
 ];
 export const packState = (s: PlayerState): number[] => STATE_KEYS.map((k) => s[k]);
 export function unpackState(a: number[], out: PlayerState): PlayerState {
@@ -47,7 +48,7 @@ export function unpackState(a: number[], out: PlayerState): PlayerState {
 export function newPlayerState(level: LevelDef, slot: number, cp = 0): PlayerState {
   const [x, y, z] = spawnPoint(level, cp, slot);
   const yaw = level.spawnRing ? Math.atan2(-x, -z) : 0; // 원형 출발이면 가운데를 바라본다
-  return { x, y, z, vx: 0, vy: 0, vz: 0, yaw, grounded: 1, stun: 0, coyote: 0, jumpBuf: 0, jumpHeld: 0, mover: -1, cp, falls: 0, bomb: 0, shove: 0 };
+  return { x, y, z, vx: 0, vy: 0, vz: 0, yaw, grounded: 1, stun: 0, coyote: 0, jumpBuf: 0, jumpHeld: 0, mover: -1, cp, falls: 0, bomb: 0, shove: 0, ride: -1 };
 }
 
 const GRAB_SLOW = 0.55;
@@ -184,9 +185,10 @@ export class SimWorld {
 
     // 올라탄 발판이 움직인 만큼 같이 실려 간다
     let dx = s.vx * DT, dy = s.vy * DT, dz = s.vz * DT;
-    if (s.mover >= 0 && s.mover < this.moverDelta.length) {
-      const d = this.moverDelta[s.mover];
-      dx += d[0]; dy += d[1]; dz += d[2];
+    const carry = s.mover >= 0 ? s.mover : s.ride; // 탈것에서 점프했으면 공중에서도 함께 간다
+    if (carry >= 0 && carry < this.moverDelta.length) {
+      const d = this.moverDelta[carry];
+      dx += d[0]; dy += s.mover >= 0 ? d[1] : 0; dz += d[2];
     }
 
     // 움직이는 벽이 플레이어를 밀어낸다
@@ -221,6 +223,8 @@ export class SimWorld {
         }
       }
     }
+    // 바닥에 서면 탈것 기억을 갱신한다(탈것이 아닌 바닥에 서면 지운다)
+    if (grounded) s.ride = s.mover >= 0 && L.movers[s.mover].ride ? s.mover : -1;
     s.grounded = grounded ? 1 : 0;
 
     // 점프 발판
@@ -319,7 +323,7 @@ export class SimWorld {
     const [x, y, z] = this.safeSpawn(s.cp, slot);
     s.x = x; s.y = y + 0.05; s.z = z;
     s.vx = s.vy = s.vz = 0;
-    s.stun = 0; s.shove = 0; s.grounded = 0; s.mover = -1; s.coyote = 0; s.jumpBuf = 0;
+    s.stun = 0; s.shove = 0; s.grounded = 0; s.mover = -1; s.ride = -1; s.coyote = 0; s.jumpBuf = 0;
     s.falls++;
   }
 

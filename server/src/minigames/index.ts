@@ -20,6 +20,7 @@ const REGISTRY: Record<string, MinigameServer> = {
   last: survivalGame('last'),
   bomb: survivalGame('bomb'),
   dodge: survivalGame('dodge'),
+  hover: survivalGame('hover'),
   treasure: collectGame('treasure'),
 };
 

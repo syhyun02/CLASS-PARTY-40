@@ -4,6 +4,7 @@ import { buildRace } from './levels/race';
 import { buildBomb, buildDodge, buildLast, buildSpinner, buildSumo, buildTail, buildTiles, buildTreasure } from './levels/arenas';
 import type { PublicQ } from './chem/bank';
 import { buildChemMaze, buildMaze } from './levels/maze';
+import { buildHover } from './levels/hover';
 import { buildQuiz } from './levels/quiz';
 
 export type GameMode = 'play' | 'chem';
@@ -64,6 +65,10 @@ export const GAMES: GameMeta[] = [
   {
     id: 'bomb', name: '펑펑 광장', emoji: '💣', genre: 'survival', modes: ['play', 'chem'],
     howTo: '빨간 원 밖으로 피하거나 벽 뒤에 숨어요!', timeLimit: 76, implemented: true, buildLevel: buildBomb,
+  },
+  {
+    id: 'hover', name: '둥둥 호버보드', emoji: '🛸', genre: 'survival', modes: ['play', 'chem'],
+    howTo: '보드에서 떨어지지 마요! 낮은 봉은 점프, 벽은 구멍으로 쏙!', timeLimit: 72, implemented: true, buildLevel: buildHover,
   },
   {
     id: 'dodge', name: '피구공 피하기', emoji: '🏐', genre: 'survival', modes: ['play', 'chem'],

@@ -739,6 +739,7 @@ function MoversView({ level, mat, shadow }: { level: LevelDef; mat: THREE.Materi
   if (!movers.length) return null;
   return (
     <group>
+      {movers.map((m, i) => m.ride && <HoverDeco key={i} m={m} />)}
       <instancedMesh ref={body} args={[box, mat, movers.length]} frustumCulled={false} castShadow={shadow} receiveShadow={shadow} />
       {eyes > 0 && <>
         <instancedMesh ref={whites} args={[ball, undefined, eyes]} frustumCulled={false}><meshBasicMaterial color="#ffffff" /></instancedMesh>
@@ -749,6 +750,46 @@ function MoversView({ level, mat, shadow }: { level: LevelDef; mat: THREE.Materi
   );
 }
 const ID_Q4 = new THREE.Quaternion();
+
+/** 호버보드 꾸밈: 테두리 범퍼, 아래로 뿜는 빛, 깜빡이는 추진기. 보드를 따라 움직인다(판정 없음). */
+function HoverDeco({ m }: { m: LevelDef['movers'][number] }) {
+  const g = useRef<THREE.Group>(null!);
+  const glow = useRef<THREE.MeshBasicMaterial>(null!);
+  const jets = useRef<THREE.InstancedMesh>(null!);
+  const jetGeo = useMemo(() => new THREE.ConeGeometry(0.55, 1.6, 12, 1, true).rotateX(Math.PI), []);
+  const spots = useMemo(() => [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, -1], [0, 1]].map(([x, z]) => [x * (m.h[0] - 1.4), z * (m.h[2] - 1.6)]), [m]);
+  useFrame((state) => {
+    const t = net.levelTime(), o = moverOffset(m, t);
+    const bob = Math.sin(state.clock.elapsedTime * 2.2) * 0.04;
+    g.current.position.set(m.p[0] + o[0], m.p[1] + o[1] + bob, m.p[2] + o[2]);
+    const moving = m.ride ? t > m.ride.start && t < m.ride.start + m.ride.duration : false;
+    glow.current.opacity = 0.35 + Math.sin(state.clock.elapsedTime * 9) * 0.08 + (moving ? 0.15 : 0);
+    spots.forEach(([x, z], i) => {
+      const f = 0.85 + Math.sin(state.clock.elapsedTime * 23 + i * 1.7) * 0.15 + (moving ? 0.25 : 0);
+      M4.compose(V3.set(x, -m.h[1] - 0.8 * f, z), ID_Q4, S3.set(1, f, 1));
+      jets.current.setMatrixAt(i, M4);
+    });
+    jets.current.instanceMatrix.needsUpdate = true;
+  });
+  return (
+    <group ref={g}>
+      {/* 테두리 범퍼: 보드 가장자리를 눈에 띄게(낮아서 걸리지 않는다) */}
+      {[[0, m.h[2] + 0.18, m.h[0] + 0.36, 0.18], [0, -m.h[2] - 0.18, m.h[0] + 0.36, 0.18], [m.h[0] + 0.18, 0, 0.18, m.h[2]], [-m.h[0] - 0.18, 0, 0.18, m.h[2]]].map(([x, z, w, d], i) => (
+        <mesh key={i} position={[x, 0, z]} scale={[w, m.h[1] * 1.1, d]}>
+          <boxGeometry args={[2, 2, 2]} />
+          <meshLambertMaterial color="#ffd43b" emissive="#ff9f1a" emissiveIntensity={0.35} />
+        </mesh>
+      ))}
+      <mesh position={[0, -m.h[1] - 0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[m.h[0] * 2.1, m.h[2] * 2.1]} />
+        <meshBasicMaterial ref={glow} color="#5ff2ff" transparent opacity={0.4} depthWrite={false} side={THREE.DoubleSide} />
+      </mesh>
+      <instancedMesh ref={jets} args={[jetGeo, undefined, spots.length]} frustumCulled={false}>
+        <meshBasicMaterial color="#8ff7ff" transparent opacity={0.55} depthWrite={false} />
+      </instancedMesh>
+    </group>
+  );
+}
 
 /** 줄무늬 봉 재질: 흰 줄과 봉마다 다른 색 줄을 번갈아 칠한다(색은 인스턴스마다 다르다) */
 function makeBarMaterial(tex: THREE.Texture) {
@@ -779,13 +820,14 @@ function SweepersView({ level, shadow }: { level: LevelDef; shadow: boolean }) {
   const pole = useMemo(() => new THREE.CylinderGeometry(1, 1, 1, 10), []);
   const tex = useMemo(() => { const t = stripeTexture('#000000', '#ffffff', 2); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1, 6); return t; }, []);
   const barMat = useMemo(() => makeBarMaterial(tex), [tex]);
-  const hasPole = list.filter((s) => s.c[1] > s.r + 1);
+  const hasPole = list.filter((s) => s.c[1] > s.r + 1 && !s.float);
 
   useLayoutEffect(() => {
     if (!n) return;
     list.forEach((s, i) => {
       bars.current.setColorAt(i, col.set(s.color ?? '#ff4f8b'));
-      M4.compose(V3.set(s.c[0], s.c[1] - 0.25 - s.r, s.c[2]), ID_Q4, S3.set(1, 0.5 + s.r, 1));
+      // 공중에 뜬 봉(호버보드 코스)은 받침을 그리지 않는다
+      M4.compose(V3.set(s.c[0], s.c[1] - 0.25 - s.r, s.c[2]), ID_Q4, s.float ? S3.set(0, 0, 0) : S3.set(1, 0.5 + s.r, 1));
       bases.current.setMatrixAt(i, M4);
     });
     hasPole.forEach((s, i) => { M4.compose(V3.set(s.c[0], s.c[1] - 1, s.c[2]), ID_Q4, S3.set(0.2, 2, 0.2)); poles.current.setMatrixAt(i, M4); });
