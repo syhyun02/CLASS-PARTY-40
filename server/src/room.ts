@@ -1,8 +1,8 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import type { Server, Socket } from 'socket.io';
 import {
-  COUNTDOWN_SEC, DT, FLAG_ACT, FLAG_DONE, FLAG_GRAB, FLAG_HELD, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_MOVING, FLAG_STUN, MAX_PLAYERS, NO_INPUT, PLAYER_COLORS, PLAYER_RADIUS,
-  DEFAULT_BANK, PODIUM, PODIUM_Z, SNAPSHOT_EVERY, SimWorld, TICK_RATE, buildLevel, cleanBank, pickQuestions, encodeSnapshot, getGame, newPlayerState, packState,
+  COUNTDOWN_SEC, DT, FLAG_ACT, FLAG_DONE, FLAG_GRAB, FLAG_HELD, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_SHOVED, FLAG_STUN, MAX_PLAYERS, NO_INPUT, PLAYER_COLORS, PLAYER_RADIUS,
+  BODY_DIST, DEFAULT_BANK, PODIUM, PODIUM_Z, SNAPSHOT_EVERY, SimWorld, TICK_RATE, bodyPush, buildLevel, cleanBank, pickQuestions, encodeSnapshot, getGame, newPlayerState, packState,
   type HostCmd, type InputMsg, type JoinReq, type JoinRes, type LevelDef, type Phase, type PlayerInput,
   type BankQ, type PickedQ, type PlayerState, type QLevel, type RoomConfig, type RoomState, type RoundRow, type SelfMsg, type SnapPlayer,
 } from '@shared';
@@ -468,7 +468,7 @@ export class Room {
   private separatePlayers() {
     const list: Player[] = [];
     for (const p of this.players.values()) if (p.connected && p.active && !p.out) list.push(p);
-    const min = PLAYER_RADIUS * 2;
+    const min = BODY_DIST;
     for (let i = 0; i < list.length; i++) {
       const a = list[i].state;
       for (let j = i + 1; j < list.length; j++) {
@@ -480,7 +480,7 @@ export class Room {
         const d = Math.sqrt(d2);
         // 완전히 겹치면 자리 번호로 방향을 정해 흩어 놓는다
         const nx = d > 1e-4 ? dx / d : Math.cos(i * 2.4), nz = d > 1e-4 ? dz / d : Math.sin(i * 2.4);
-        const push = Math.min(3.6 / TICK_RATE, (min - d) * 0.5); // 초당 최대 3.6m로 밀어낸다
+        const push = bodyPush(d);
         this.sim.nudge(a, -nx * push, -nz * push);
         this.sim.nudge(b, nx * push, nz * push);
       }
@@ -496,7 +496,7 @@ export class Room {
       if (s.stun > 0) flags |= FLAG_STUN;
       if (p.done) flags |= FLAG_DONE;
       if (!p.connected || !p.active || p.out) flags |= FLAG_HIDDEN;
-      if (Math.abs(s.vx) + Math.abs(s.vz) > 0.5) flags |= FLAG_MOVING;
+      if (s.shove > 0) flags |= FLAG_SHOVED;
       if (this.tick - p.pushAt < TICK_RATE * 0.3) flags |= FLAG_ACT;
       if (p.grabbing) flags |= FLAG_GRAB;
       if (p.held) flags |= FLAG_HELD;

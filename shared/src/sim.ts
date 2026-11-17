@@ -21,6 +21,7 @@ export interface PlayerState {
   cp: number; // 마지막 체크포인트
   falls: number;
   bomb: number; // 다음에 처리할 폭탄 번호(같은 폭탄에 두 번 맞거나 건너뛰지 않게)
+  shove: number; // 밀쳐져서 비틀거리는 남은 틱(넘어지지는 않지만 잠깐 조작이 안 된다)
 }
 
 export interface PlayerInput {
@@ -35,7 +36,7 @@ export interface PlayerInput {
 export const NO_INPUT: PlayerInput = { mx: 0, mz: 0, jump: false, action: false };
 
 export const STATE_KEYS: (keyof PlayerState)[] = [
-  'x', 'y', 'z', 'vx', 'vy', 'vz', 'yaw', 'grounded', 'stun', 'coyote', 'jumpBuf', 'jumpHeld', 'mover', 'cp', 'falls', 'bomb',
+  'x', 'y', 'z', 'vx', 'vy', 'vz', 'yaw', 'grounded', 'stun', 'coyote', 'jumpBuf', 'jumpHeld', 'mover', 'cp', 'falls', 'bomb', 'shove',
 ];
 export const packState = (s: PlayerState): number[] => STATE_KEYS.map((k) => s[k]);
 export function unpackState(a: number[], out: PlayerState): PlayerState {
@@ -46,11 +47,19 @@ export function unpackState(a: number[], out: PlayerState): PlayerState {
 export function newPlayerState(level: LevelDef, slot: number, cp = 0): PlayerState {
   const [x, y, z] = spawnPoint(level, cp, slot);
   const yaw = level.spawnRing ? Math.atan2(-x, -z) : 0; // 원형 출발이면 가운데를 바라본다
-  return { x, y, z, vx: 0, vy: 0, vz: 0, yaw, grounded: 1, stun: 0, coyote: 0, jumpBuf: 0, jumpHeld: 0, mover: -1, cp, falls: 0, bomb: 0 };
+  return { x, y, z, vx: 0, vy: 0, vz: 0, yaw, grounded: 1, stun: 0, coyote: 0, jumpBuf: 0, jumpHeld: 0, mover: -1, cp, falls: 0, bomb: 0, shove: 0 };
 }
 
 const GRAB_SLOW = 0.55;
 const REHIT_TICKS = Math.round(0.2 * TICK_RATE); // 회전봉에 맞은 직후 다시 맞지 않는 시간
+/** 캐릭터끼리 이 거리보다 가까워지면 서로 밀어낸다(몸통이 살짝 겹치기 시작하는 거리) */
+export const BODY_DIST = PLAYER_RADIUS * 2 + 0.08;
+/**
+ * 겹친 정도에 따라 한 틱에 밀려나는 거리. 겹친 만큼의 일부만 밀어내서 툭 튕기지 않고 스르륵 밀린다.
+ * 상한은 달리는 속도보다 커서 마주 달려도 서로 통과하지 않는다. 서버와 클라이언트 예측이 같은 식을 쓴다.
+ */
+export const bodyPush = (d: number) => Math.min(7.2 / TICK_RATE, (BODY_DIST - d) * 0.3);
+
 const G_LEVEL = 0x0001;
 const G_PLAYER = 0x0002;
 const LEVEL_GROUPS = (G_LEVEL << 16) | G_PLAYER; // 맵: 플레이어와만 충돌
@@ -150,14 +159,17 @@ export class SimWorld {
     if (slow) { mx *= GRAB_SLOW; mz *= GRAB_SLOW; } // 잡거나 잡혀 있으면 느려진다
     const stunned = s.stun > 0;
     if (stunned) { s.stun--; mx = 0; mz = 0; }
+    const shoved = s.shove > 0;
+    if (shoved) { s.shove--; mx = 0; mz = 0; }
 
     // 수평 가속
-    const accel = (s.grounded ? GROUND_ACCEL : AIR_ACCEL) * (stunned ? 0.25 : 1) * DT;
+    // 넘어졌거나 밀쳐졌을 때는 천천히 미끄러지며 멈춘다
+    const accel = (s.grounded ? GROUND_ACCEL : AIR_ACCEL) * (stunned ? 0.25 : shoved ? 0.28 : 1) * DT;
     const tx = mx * MOVE_SPEED, tz = mz * MOVE_SPEED;
     const dvx = tx - s.vx, dvz = tz - s.vz;
     const dv = Math.hypot(dvx, dvz);
     if (dv <= accel || dv === 0) { s.vx = tx; s.vz = tz; } else { s.vx += (dvx / dv) * accel; s.vz += (dvz / dv) * accel; }
-    if (!stunned && (mx !== 0 || mz !== 0)) s.yaw = Math.atan2(mx, mz);
+    if (!stunned && !shoved && (mx !== 0 || mz !== 0)) s.yaw = Math.atan2(mx, mz);
 
     // 점프: 코요테 타임 + 입력 버퍼로 모바일에서도 타이밍이 너그럽다
     const jumpDown = canMove && inp.jump;
@@ -282,7 +294,7 @@ export class SimWorld {
     const [x, y, z] = spawnPoint(this.level, s.cp, slot);
     s.x = x; s.y = y + 0.05; s.z = z;
     s.vx = s.vy = s.vz = 0;
-    s.stun = 0; s.grounded = 0; s.mover = -1; s.coyote = 0; s.jumpBuf = 0;
+    s.stun = 0; s.shove = 0; s.grounded = 0; s.mover = -1; s.coyote = 0; s.jumpBuf = 0;
     s.falls++;
   }
 

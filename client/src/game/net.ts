@@ -1,7 +1,7 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import { io, type Socket } from 'socket.io-client';
 import {
-  DT, FLAG_GRAB, FLAG_HELD, FLAG_HIDDEN, NO_INPUT, SNAPSHOT_EVERY, SimWorld, TICK_RATE, buildLevel, decodeSnapshot, newPlayerState, unpackState,
+  BODY_DIST, DT, FLAG_GRAB, FLAG_HELD, FLAG_HIDDEN, NO_INPUT, SNAPSHOT_EVERY, SimWorld, TICK_RATE, bodyPush, buildLevel, decodeSnapshot, newPlayerState, unpackState,
   type CollectState, type CreateRes, type HostCmd, type JoinRes, type LevelDef, type PlayerInput, type PlayerState, type RoomConfig,
   type GameStateMsg, type PersonalMsg, type RoomState, type SelfMsg, type SnapPlayer,
 } from '@shared';
@@ -57,7 +57,9 @@ class GameNet {
   private obstacleTick = 0;
   private actionWas = false;
   private grabWas = false;
-  stats = { corrections: 0, lastError: 0, pending: 0 };
+  stats = { corrections: 0, lastError: 0, pending: 0, errorSum: 0 };
+  /** 시험용: 겹침 예측을 끄고 비교해 볼 때 쓴다 */
+  debugNoSeparation = false;
 
   private out: RenderPlayer[] = [];
   private outDirty = true;
@@ -246,13 +248,15 @@ class GameNet {
 
     if (error > 0.03) {
       // 예측이 서버와 달랐다 → 서버 상태에서 다시 시작해 아직 처리 안 된 입력을 재생한다
-      const bx = me.x, by = me.y, bz = me.z, stunBefore = me.stun;
+      const bx = me.x, by = me.y, bz = me.z, stunBefore = me.stun, shoveBefore = me.shove;
       unpackState(m.s, me);
+      if (this.synced && me.shove > shoveBefore + 5) play('push');
       if (this.synced && me.stun > stunBefore + 5) play('bonk'); // 서버에서만 판정하는 밀치기·오답 문에 맞았다
       let t = rel;
       for (const p of this.pending) {
         sim.setTick(++t);
         sim.stepPlayer(me, p.input, useStore.getState().myId!, p.canMove, p.slow);
+        this.separateLocal(me, t);
         this.history.set(p.seq, [me.x, me.y, me.z]);
       }
       const dx = bx - me.x, dy = by - me.y, dz = bz - me.z;
@@ -266,7 +270,7 @@ class GameNet {
         this.err.x = this.err.y = this.err.z = 0;
         this.prev.x = me.x; this.prev.y = me.y; this.prev.z = me.z;
       }
-      if (this.synced) this.stats.corrections++;
+      if (this.synced) { this.stats.corrections++; if (jump < 4) this.stats.errorSum += jump; }
       this.synced = true;
     }
     this.predTick = rel + this.pending.length;
@@ -335,6 +339,7 @@ class GameNet {
     const mineFlags = this.snaps[this.snaps.length - 1]?.players.get(myId)?.flags ?? 0;
     const slow = (mineFlags & (FLAG_GRAB | FLAG_HELD)) !== 0;
     sim.stepPlayer(me, inp, myId, canMove, slow);
+    this.separateLocal(me, this.predTick);
     if (me.vy > 8 && vy0 <= 0.5) play(me.vy > 12 ? 'reveal' : 'jump', 0.8); // 점프 / 점프 발판
     if (me.stun > stun0 + 5) play('bonk');
     if (action && !this.actionWas && canMove) play('push', 0.8);
@@ -343,6 +348,34 @@ class GameNet {
     this.grabWas = grab;
     this.pending.push({ seq, input: inp, canMove, slow });
     this.history.set(seq, [me.x, me.y, me.z]);
+  }
+
+  /**
+   * 다른 캐릭터와 겹치면 서버와 같은 식으로 미리 밀려난다.
+   * 서버만 판정하면 내 화면에서는 일단 겹쳤다가 뒤늦게 튕겨 나와 끊겨 보이기 때문이다.
+   * 상대 위치는 가장 최근 스냅샷 값을 쓴다(조금 과거지만 밀리는 방향과 세기는 거의 같다).
+   */
+  private separateLocal(me: PlayerState, simTick: number) {
+    const latest = this.snaps[this.snaps.length - 1];
+    const prev = this.snaps[this.snaps.length - 2];
+    const sim = this.sim;
+    if (!latest || !sim || this.debugNoSeparation) return;
+    // 이 걸음이 서버에서 처리될 무렵의 상대 위치를 어림한다: 최근 두 스냅샷의 속도로 조금 앞을 내다본다
+    const ahead = Math.max(0, Math.min(TICK_RATE / 4, simTick - (latest.tick - this.levelTick)));
+    const span = prev ? latest.tick - prev.tick : 0;
+    const myId = useStore.getState().myId;
+    for (const o of latest.players.values()) {
+      if (o.id === myId || o.flags & FLAG_HIDDEN) continue;
+      let ox = o.x, oz = o.z;
+      const po = span > 0 ? prev!.players.get(o.id) : undefined;
+      if (po && Math.abs(o.x - po.x) + Math.abs(o.z - po.z) < 3) { ox += ((o.x - po.x) / span) * ahead; oz += ((o.z - po.z) / span) * ahead; }
+      const dx = me.x - ox, dz = me.z - oz;
+      if (dx > BODY_DIST || dx < -BODY_DIST || dz > BODY_DIST || dz < -BODY_DIST || Math.abs(me.y - o.y) > 1) continue;
+      const d = Math.hypot(dx, dz);
+      if (d >= BODY_DIST || d < 1e-4) continue;
+      const push = bodyPush(d);
+      sim.nudge(me, (dx / d) * push, (dz / d) * push);
+    }
   }
 
   /** 맵의 움직이는 장애물을 그릴 시간(초) */

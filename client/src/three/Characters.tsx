@@ -1,7 +1,7 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { FLAG_ACT, FLAG_DONE, FLAG_GRAB, FLAG_GROUNDED, FLAG_HELD, FLAG_HIDDEN, FLAG_STUN, MAX_PLAYERS } from '@shared';
+import { FLAG_ACT, FLAG_DONE, FLAG_GRAB, FLAG_GROUNDED, FLAG_HELD, FLAG_HIDDEN, FLAG_SHOVED, FLAG_STUN, MAX_PLAYERS } from '@shared';
 import { net } from '../game/net';
 import { useStore } from '../game/store';
 
@@ -10,7 +10,7 @@ import { useStore } from '../game/store';
  * 짧은 팔다리와 꼬리, 번호마다 다른 머리 장식 7종.
  * 40명을 부위별 InstancedMesh 8개(= 드로우콜 8번)로 그린다. 애니메이션은 전부 계산식이다.
  */
-interface Anim { x: number; y: number; z: number; speed: number; phase: number; groundY: number; yaw: number; seen: number; air: number }
+interface Anim { x: number; y: number; z: number; speed: number; phase: number; groundY: number; yaw: number; seen: number; air: number; tilt: number }
 
 const N = MAX_PLAYERS;
 const root = new THREE.Matrix4();
@@ -114,7 +114,7 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       if (!pi || p.flags & FLAG_HIDDEN) continue;
       used.add(p.id);
       let a = anims.current.get(p.id);
-      if (!a) { a = { x: p.x, y: p.y, z: p.z, speed: 0, phase: Math.random() * 6, groundY: p.y, yaw: p.yaw, seen: time, air: 0 }; anims.current.set(p.id, a); }
+      if (!a) { a = { x: p.x, y: p.y, z: p.z, speed: 0, phase: Math.random() * 6, groundY: p.y, yaw: p.yaw, seen: time, air: 0, tilt: 0 }; anims.current.set(p.id, a); }
       const dist = Math.hypot(p.x - a.x, p.z - a.z);
       const sp = dt > 0 ? Math.min(12, dist / dt) : 0;
       a.speed += (sp - a.speed) * Math.min(1, dt * 10);
@@ -135,7 +135,10 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       // 몸 전체: 위치 → 방향 → (넘어질 때) 구르기 → 찌그러짐
       const airborne = !grounded && a.air > 0.06;
       const squashY = stun ? 1 : airborne ? 1.08 : 1 - run * 0.04 * Math.sin(a.phase * 2) - (lose ? 0.08 : 0);
-      const lean = stun ? time * 13 : run * 0.22;
+      // 밀쳐지면 뒤로 젖혀지고, 밀 때는 몸을 앞으로 내민다
+      const shoved = (p.flags & FLAG_SHOVED) !== 0;
+      a.tilt += ((shoved ? -0.5 : p.flags & FLAG_ACT ? 0.42 : 0) - a.tilt) * Math.min(1, dt * 16);
+      const lean = stun ? time * 13 : run * 0.22 + a.tilt;
       e.set(lean, a.yaw, stun ? Math.sin(time * 9) * 0.5 : Math.sin(a.phase) * run * 0.06, 'YXZ');
       q.setFromEuler(e);
       const py = p.y + hop + (stun ? 0.35 : 0);
@@ -175,8 +178,8 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
         // 밀치기·잡기: 두 손을 앞으로 쭉 뻗는다
         part(limbs.current, L + 2, -0.22, 0.5, 0.56, 0.15, 0.15, 0.15);
         part(limbs.current, L + 3, 0.22, 0.5, 0.56, 0.15, 0.15, 0.15);
-      } else if (p.flags & FLAG_HELD) {
-        // 잡혔을 때: 팔을 허우적거린다
+      } else if (p.flags & FLAG_HELD || shoved) {
+        // 잡히거나 밀쳐졌을 때: 팔을 허우적거린다
         const fl = Math.sin(time * 22 + p.id) * 0.16;
         part(limbs.current, L + 2, -0.5, 0.62 + fl, 0, 0.125, 0.125, 0.125);
         part(limbs.current, L + 3, 0.5, 0.62 - fl, 0, 0.125, 0.125, 0.125);
@@ -240,7 +243,7 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
 
       // ---- 얼굴: 까맣고 반짝이는 큰 눈, 볼터치, 상황에 따라 바뀌는 입 ----
       const blink = !stun && !win && (time * 0.5 + p.id * 0.37) % 1 > 0.96;
-      const held = (p.flags & FLAG_HELD) !== 0;
+      const held = (p.flags & FLAG_HELD) !== 0 || shoved;
       const EX = 0.175, EY = HY + 0.02, EZ = 0.415;
       const W = n * 6, D = n * 3, A = n * 3, C = n * 3;
       for (let k = 0; k < 6; k++) whites.current.setMatrixAt(W + k, ZERO);
