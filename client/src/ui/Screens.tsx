@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { GAMES, LEVEL_LABEL, PLAYER_COLORS, type GameMode, type QLevel } from '@shared';
+import { GAMES, LEVEL_LABEL, PLAYER_COLORS, SUBJECTS, UNIT_SHORT, subjectOf, type GameMode, type QLevel } from '@shared';
 import { net } from '../game/net';
 import { useStore } from '../game/store';
 import { BankEditor } from './BankEditor';
@@ -7,7 +7,7 @@ import { Blob } from './Overlays';
 
 const MODES: { id: GameMode; title: string; sub: string; emoji: string; ready: boolean }[] = [
   { id: 'play', title: '순수 놀이 모드', sub: '달리고 점프하고 피하는 3D 파티 게임', emoji: '🎈', ready: true },
-  { id: 'chem', title: '물질과 에너지 3·4단원', sub: '화학 변화의 자발성 · 반응 속도 개념 퀴즈가 섞여 나와요', emoji: '⚗️', ready: true },
+  { id: 'chem', title: '교과 퀴즈 모드', sub: '물질과 에너지 3·4단원 · 과학탐구실험1·2 개념 퀴즈가 섞여 나와요', emoji: '⚗️', ready: true },
 ];
 
 function Shell({ children, back }: { children: React.ReactNode; back?: () => void }) {
@@ -65,6 +65,7 @@ export function HostSetup() {
   const [bankOpen, setBankOpen] = useState(false);
   const pool = GAMES.filter((g) => g.implemented && g.modes.includes(mode));
   const games = pool.filter((g) => !off.includes(g.id)).map((g) => g.id);
+  const subject = subjectOf(units);
   const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? (list.length > 1 ? list.filter((x) => x !== v) : list) : [...list, v]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -100,7 +101,7 @@ export function HostSetup() {
                   className={`rounded-2xl border-4 p-2 text-center ${on ? 'border-mint bg-mint/20' : 'border-ink/10 bg-white opacity-60'}`}>
                   <div className="text-2xl">{g.emoji}</div>
                   <div className="font-display text-sm leading-tight">{g.name}</div>
-                  {mode === 'chem' && g.chem && <div className="text-xs text-grape">화학 문제</div>}
+                  {mode === 'chem' && g.chem && <div className="text-xs text-grape">교과 문제</div>}
                 </button>
               );
             })}
@@ -108,9 +109,18 @@ export function HostSetup() {
         </section>
         {mode === 'chem' && (
           <section>
-            <div className="mb-2 font-display text-lg">출제 범위</div>
+            <div className="mb-2 font-display text-lg">과목과 출제 범위</div>
+            <div className="mb-2 grid gap-2 sm:grid-cols-3">
+              {SUBJECTS.map((sb) => (
+                <button key={sb.id} onClick={() => setUnits(sb.units)}
+                  className={`rounded-2xl border-4 p-2 text-left ${subject?.id === sb.id ? 'border-grape bg-grape/10' : 'border-ink/10 bg-white'}`}>
+                  <div className="font-display">{sb.emoji} {sb.name}</div>
+                  <div className="text-xs opacity-70">{sb.sub}</div>
+                </button>
+              ))}
+            </div>
             <div className="flex flex-wrap items-center gap-2">
-              {[3, 4].map((u) => <button key={u} className={`chip ${units.includes(u) ? '!bg-grape !text-white' : 'opacity-60'}`} onClick={() => setUnits(toggle(units, u))}>{u}단원</button>)}
+              {(subject?.units ?? []).map((u) => <button key={u} className={`chip ${units.includes(u) ? '!bg-grape !text-white' : 'opacity-60'}`} onClick={() => setUnits(toggle(units, u))}>{UNIT_SHORT[u]}</button>)}
               <span className="opacity-30">|</span>
               {(['easy', 'normal', 'hard'] as QLevel[]).map((l) => <button key={l} className={`chip ${levels.includes(l) ? '!bg-bubble !text-white' : 'opacity-60'}`} onClick={() => setLevels(toggle(levels, l))}>{LEVEL_LABEL[l]}</button>)}
               <button className="btn-ghost !py-1.5 !text-base" onClick={() => setBankOpen(true)}>📚 문제은행 편집</button>

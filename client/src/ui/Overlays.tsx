@@ -409,7 +409,8 @@ function useDiag() {
   const netBad = n.rtt > 220 || n.jitter > 90, netSoso = n.rtt > 130 || n.jitter > 45;
   const serverBad = n.serverLate > 25 || n.serverTickMs > 10;
   const deviceBad = fps > 0 && fps < 40;
-  const worst = serverBad ? '🖥 서버가 버거워해요' : netBad ? '📶 네트워크가 불안정해요' : deviceBad ? '📱 기기가 느려요' : null;
+  // 화면이 느리면 패킷을 늦게 읽어서 네트워크 흔들림도 크게 재진다. 그래서 기기가 느릴 때는 기기를 먼저 짚는다.
+  const worst = serverBad ? '🖥 서버가 버거워해요' : deviceBad ? '📱 기기가 느려요' : netBad ? '📶 네트워크가 불안정해요' : null;
   return { ...n, fps, netBad, netSoso, serverBad, deviceBad, worst };
 }
 

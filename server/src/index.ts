@@ -77,7 +77,10 @@ io.on('connection', (socket) => {
     if (rooms.size >= 50) return ack({ ok: false, error: '서버에 방이 너무 많아요.' });
     const code = newCode();
     const cfg = req?.config ?? { mode: 'play', rounds: 10, games: [] };
-    const room = new Room(io, RAPIER, code, { mode: cfg.mode === 'chem' ? 'chem' : 'play', rounds: cfg.rounds, games: [...(cfg.games ?? [])] });
+    const room = new Room(io, RAPIER, code, {
+      mode: cfg.mode === 'chem' ? 'chem' : 'play', rounds: cfg.rounds, games: [...(cfg.games ?? [])],
+      chem: cfg.chem, studentSound: cfg.studentSound, // 출제 범위와 소리 설정도 방 만들 때 값 그대로(방에서 검사한다)
+    });
     rooms.set(code, room);
     attachHost(room);
     ack({ ok: true, code, hostToken: room.hostToken });

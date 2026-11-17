@@ -1,6 +1,6 @@
 import QRCode from 'qrcode';
 import { useEffect, useMemo, useState } from 'react';
-import { GAMES, LEVEL_LABEL, MAX_PLAYERS, getGame, type QLevel, type RoomState } from '@shared';
+import { GAMES, LEVEL_LABEL, MAX_PLAYERS, SUBJECTS, UNIT_SHORT, getGame, subjectOf, type QLevel, type RoomState } from '@shared';
 import { net } from '../game/net';
 import { useStore } from '../game/store';
 import { Scene } from '../three/Scene';
@@ -139,14 +139,20 @@ export function HostScreen() {
           {room.config.mode === 'chem' && (
             <div className="rounded-2xl bg-white p-3 shadow-popsm">
               <div className="mb-1 flex items-center justify-between font-display">
-                <span>⚗️ 화학 문제 <span className="text-sm opacity-60">({room.bankSize}문제)</span></span>
-                <button className="chip" onClick={() => setBankOpen(true)}>📚 문제은행 편집</button>
+                <span>📚 교과 문제 <span className="text-sm opacity-60">({room.bankSize}문제)</span></span>
+                <button className="chip" onClick={() => setBankOpen(true)}>문제은행 편집</button>
+              </div>
+              <div className="mb-1 flex flex-wrap gap-1">
+                {SUBJECTS.map((sb) => (
+                  <button key={sb.id} disabled={!lobby} className={`chip ${subjectOf(room.config.chem!.units)?.id === sb.id ? '!bg-ink !text-white' : 'opacity-50'}`}
+                    onClick={() => cmd({ type: 'config', config: { ...room.config, chem: { ...room.config.chem!, units: sb.units } } })}>{sb.emoji} {sb.name}</button>
+                ))}
               </div>
               <div className="flex flex-wrap gap-1">
-                {[3, 4].map((u) => {
+                {(subjectOf(room.config.chem!.units)?.units ?? room.config.chem!.units).map((u) => {
                   const c = room.config.chem!, on = c.units.includes(u);
-                  return <button key={u} disabled={!lobby} className={`chip ${on ? '!bg-grape !text-white' : 'opacity-50'}`}
-                    onClick={() => cmd({ type: 'config', config: { ...room.config, chem: { ...c, units: on ? c.units.filter((x) => x !== u) : [...c.units, u] } } })}>{u}단원</button>;
+                  return <button key={u} disabled={!lobby || (on && c.units.length === 1)} className={`chip ${on ? '!bg-grape !text-white' : 'opacity-50'}`}
+                    onClick={() => cmd({ type: 'config', config: { ...room.config, chem: { ...c, units: on ? c.units.filter((x) => x !== u) : [...c.units, u] } } })}>{UNIT_SHORT[u]}</button>;
                 })}
                 {(['easy', 'normal', 'hard'] as QLevel[]).map((l) => {
                   const c = room.config.chem!, on = c.levels.includes(l);

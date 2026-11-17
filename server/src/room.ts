@@ -2,7 +2,7 @@ import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import type { Server, Socket } from 'socket.io';
 import {
   COUNTDOWN_SEC, DT, FLAG_ACT, FLAG_DONE, FLAG_GRAB, FLAG_HELD, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_SHOVED, FLAG_STUN, MAX_PLAYERS, NO_INPUT, PLAYER_COLORS, PLAYER_RADIUS,
-  BODY_DIST, DEFAULT_BANK, PODIUM, PODIUM_Z, SNAPSHOT_EVERY, SimWorld, TICK_RATE, bodyPush, buildLevel, cleanBank, pickQuestions, encodeSnapshot, getGame, newPlayerState, packState,
+  ALL_UNITS, BODY_DIST, DEFAULT_BANK, PODIUM, PODIUM_Z, SNAPSHOT_EVERY, SimWorld, TICK_RATE, bodyPush, buildLevel, cleanBank, pickQuestions, encodeSnapshot, getGame, newPlayerState, packState,
   type HostCmd, type InputMsg, type JoinReq, type JoinRes, type LevelDef, type Phase, type PlayerInput,
   type BankQ, type PickedQ, type PlayerState, type QLevel, type RoomConfig, type RoomState, type RoundRow, type SelfMsg, type SnapPlayer,
 } from '@shared';
@@ -105,7 +105,7 @@ export class Room {
     this.config.rounds = Math.max(1, Math.min(20, Math.round(this.config.rounds) || 10));
     this.config.studentSound = this.config.studentSound !== false;
     const c = this.config.chem;
-    const units = (c?.units ?? []).filter((u) => u === 3 || u === 4);
+    const units = (c?.units ?? []).filter((u) => ALL_UNITS.includes(u));
     const levels = (c?.levels ?? []).filter((l): l is QLevel => l === 'easy' || l === 'normal' || l === 'hard');
     this.config.chem = { units: units.length ? units : [3, 4], levels: levels.length ? levels : ['easy', 'normal', 'hard'] };
   }

@@ -1,14 +1,29 @@
 import { useMemo, useRef, useState } from 'react';
-import { DEFAULT_BANK, LEVEL_LABEL, UNIT_LABEL, cleanBank, type BankQ, type QLevel } from '@shared';
+import { ALL_UNITS, DEFAULT_BANK, LEVEL_LABEL, SUBJECTS, UNIT_LABEL, UNIT_SHORT, cleanBank, type BankQ, type QLevel } from '@shared';
 import { net } from '../game/net';
 
 const KEY = 'cp40:bank';
 const LEVELS: QLevel[] = ['easy', 'normal', 'hard'];
 
+const VERSION_KEY = 'cp40:bankVersion';
+const VERSION = 2; // 2: 과학탐구실험1·2 문제 추가
+
 export function loadBank(): BankQ[] {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) { const b = cleanBank(JSON.parse(raw)); if (b.length) return b; }
+    if (raw) {
+      let b = cleanBank(JSON.parse(raw));
+      if (b.length) {
+        // 예전에 저장해 둔 문제은행에는 나중에 추가된 기본 문제가 없다 → 한 번만 덧붙여 준다
+        if (Number(localStorage.getItem(VERSION_KEY) ?? 1) < VERSION) {
+          const have = new Set(b.map((q) => q.id));
+          b = [...b, ...DEFAULT_BANK.filter((q) => q.unit > 4 && !have.has(q.id))];
+          localStorage.setItem(KEY, JSON.stringify(b));
+          localStorage.setItem(VERSION_KEY, String(VERSION));
+        }
+        return b;
+      }
+    }
   } catch { /* 깨진 값이면 기본 문제 */ }
   return DEFAULT_BANK;
 }
@@ -22,7 +37,7 @@ const blank = (): BankQ => ({ id: `my${Date.now().toString(36)}`, unit: 3, level
  */
 export function BankEditor({ onClose }: { onClose: () => void }) {
   const [bank, setBank] = useState<BankQ[]>(loadBank);
-  const [unit, setUnit] = useState<0 | 3 | 4>(0);
+  const [unit, setUnit] = useState(0);
   const [level, setLevel] = useState<QLevel | ''>('');
   const [edit, setEdit] = useState<BankQ | null>(null);
   const [msg, setMsg] = useState('');
@@ -31,7 +46,7 @@ export function BankEditor({ onClose }: { onClose: () => void }) {
 
   const save = (next: BankQ[], note: string) => {
     setBank(next);
-    try { localStorage.setItem(KEY, JSON.stringify(next)); } catch { setMsg('이 브라우저에 저장하지 못했어요. 파일로 내보내 두세요.'); return; }
+    try { localStorage.setItem(KEY, JSON.stringify(next)); localStorage.setItem(VERSION_KEY, String(VERSION)); } catch { setMsg('이 브라우저에 저장하지 못했어요. 파일로 내보내 두세요.'); return; }
     net.hostCmd({ type: 'bank', bank: next }); // 방이 열려 있을 때만 전달된다
     setMsg(note);
   };
@@ -62,7 +77,7 @@ export function BankEditor({ onClose }: { onClose: () => void }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="font-display text-2xl">문제은행 <span className="text-base opacity-60">{bank.length}문제</span></h2>
-            <div className="text-sm opacity-70">물질과 에너지 3·4단원. 출제할 때 보기 순서는 자동으로 섞여요.</div>
+            <div className="text-sm opacity-70">물질과 에너지 · 과학탐구실험1·2. 출제할 때 보기 순서는 자동으로 섞여요.</div>
           </div>
           <button className="btn-ghost !py-2 !text-base" onClick={onClose}>닫기</button>
         </div>
@@ -70,9 +85,10 @@ export function BankEditor({ onClose }: { onClose: () => void }) {
         {edit ? (
           <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
             <div className="flex flex-wrap gap-2">
-              {[3, 4].map((u) => (
-                <button key={u} className={`chip ${edit.unit === u ? '!bg-grape !text-white' : ''}`} onClick={() => setEdit({ ...edit, unit: u as 3 | 4 })}>{UNIT_LABEL[u]}</button>
+              {ALL_UNITS.map((u) => (
+                <button key={u} className={`chip ${edit.unit === u ? '!bg-grape !text-white' : ''}`} onClick={() => setEdit({ ...edit, unit: u })}>{UNIT_SHORT[u]}</button>
               ))}
+              <span className="w-full" />
               {LEVELS.map((l) => (
                 <button key={l} className={`chip ${edit.level === l ? '!bg-bubble !text-white' : ''}`} onClick={() => setEdit({ ...edit, level: l })}>{LEVEL_LABEL[l]}</button>
               ))}
@@ -98,8 +114,8 @@ export function BankEditor({ onClose }: { onClose: () => void }) {
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2">
-              <button className={`chip ${unit === 0 ? '!bg-grape !text-white' : ''}`} onClick={() => setUnit(0)}>전체 단원</button>
-              {[3, 4].map((u) => <button key={u} className={`chip ${unit === u ? '!bg-grape !text-white' : ''}`} onClick={() => setUnit(u as 3 | 4)}>{u}단원</button>)}
+              <button className={`chip ${unit === 0 ? '!bg-grape !text-white' : ''}`} onClick={() => setUnit(0)}>전체</button>
+              {SUBJECTS.flatMap((sb) => sb.units).map((u) => <button key={u} title={UNIT_LABEL[u]} className={`chip ${unit === u ? '!bg-grape !text-white' : ''}`} onClick={() => setUnit(u)}>{UNIT_SHORT[u]}</button>)}
               <span className="opacity-30">|</span>
               <button className={`chip ${level === '' ? '!bg-bubble !text-white' : ''}`} onClick={() => setLevel('')}>전체 난이도</button>
               {LEVELS.map((l) => <button key={l} className={`chip ${level === l ? '!bg-bubble !text-white' : ''}`} onClick={() => setLevel(l)}>{LEVEL_LABEL[l]}</button>)}
@@ -111,7 +127,7 @@ export function BankEditor({ onClose }: { onClose: () => void }) {
                   <div className="flex items-start gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="mb-1 flex gap-1 text-xs">
-                        <span className="rounded-full bg-grape px-2 text-white">{q.unit}단원</span>
+                        <span className="rounded-full bg-grape px-2 text-white">{UNIT_SHORT[q.unit] ?? q.unit}</span>
                         <span className="rounded-full bg-bubble px-2 text-white">{LEVEL_LABEL[q.level]}</span>
                       </div>
                       <div className="whitespace-pre-line font-display">{q.text}</div>

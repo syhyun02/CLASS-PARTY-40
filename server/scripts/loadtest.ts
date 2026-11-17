@@ -36,7 +36,7 @@ let taken = new Set<number>();
 let gameMsgs = 0;
 let revealed = 0, explained = 0, wrongTold = 0;
 host.on('g', (m: { state: any }) => { gameMsgs++; taken = new Set(m.state?.taken ?? []); if (m.state?.quiz?.answer !== undefined) revealed++; if (m.state?.quiz?.explain) explained++; });
-const created = await new Promise<CreateRes>((res) => host.emit('host:create', { config: { mode: MODE, rounds: ROUNDS, games: [GAME] } }, res));
+const created = await new Promise<CreateRes>((res) => host.emit('host:create', { config: { mode: MODE, rounds: ROUNDS, games: [GAME], chem: { units: arg('units', '3,4').split(',').map(Number), levels: ['easy', 'normal', 'hard'] } } }, res));
 if (!created.ok) throw new Error(created.error);
 console.log(`방 ${created.code} 생성, 봇 ${BOTS}명 접속 중...`);
 
@@ -168,6 +168,7 @@ const pct = (a: number[], p: number) => { const s = [...a].sort((x, y) => x - y)
 const all = (f: (b: Bot) => number[]) => bots.flatMap(f);
 const gaps = all((b) => b.gaps), rtts = all((b) => b.rtts), lag = all((b) => b.ackLag);
 const finished = room!.players.filter((p) => p.place !== null).length;
+if (room!.levelQuiz) console.log('출제 단원:', [...new Set(room!.levelQuiz.map((q) => q.unit))].join(','), '· 예:', room!.levelQuiz[0].text.slice(0, 40));
 console.log('게임 상태 메시지 수:', gameMsgs, '· 정답 공개:', revealed, '· 해설 포함:', explained, '· 오답 문 알림:', wrongTold, '· 한 번에 맞힌 문 합계:', bots.reduce((n, b) => n + b.firstTries, 0), '· 정답 없이 받은 문제 수:', room!.levelQuiz?.length ?? 0, '· 정답 노출:', JSON.stringify(room!.levelQuiz ?? []).includes('answer'));
 if (room!.lastResult) { const ts = room!.lastResult.map((r) => parseFloat(r.detail)).filter((v) => !isNaN(v)).sort((a, c) => a - c); console.log('탈락 시각 분포(초):', [0, 0.25, 0.5, 0.75, 1].map((q) => ts[Math.min(ts.length - 1, Math.floor(q * ts.length))]).join(' / ')); }
 if (room!.lastResult) console.log('결과 상위 5:', room!.lastResult.slice(0, 5).map((r) => `${r.rank}위 ${r.name} +${r.points} (${r.detail})`).join(' | '), '· 하위:', room!.lastResult.slice(-2).map((r) => `${r.rank}위 +${r.points} (${r.detail})`).join(' | '));
