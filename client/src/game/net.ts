@@ -1,7 +1,7 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import { io, type Socket } from 'socket.io-client';
 import {
-  BODY_DIST, DT, FLAG_GRAB, FLAG_HELD, FLAG_HIDDEN, NO_INPUT, SNAPSHOT_EVERY, SimWorld, TICK_RATE, bodyPush, buildLevel, decodeSelf, decodeSnapshot, fromB64, newPlayerState, unpackState,
+  BODY_DIST, DT, FLAG_GRAB, PLAYER_RADIUS, PROP_ID_BASE, TEAMBALL, FLAG_HELD, FLAG_HIDDEN, NO_INPUT, SNAPSHOT_EVERY, SimWorld, TICK_RATE, bodyPush, buildLevel, decodeSelf, decodeSnapshot, fromB64, newPlayerState, unpackState,
   type CollectState, type CreateRes, type HostCmd, type JoinRes, type LevelDef, type PlayerInput, type PlayerState, type RoomConfig,
   type GameStateMsg, type PersonalMsg, type RoomState, type SelfMsg, type SnapPlayer,
 } from '@shared';
@@ -294,6 +294,8 @@ class GameNet {
         this.err.x = this.err.y = this.err.z = 0;
         this.prev.x = me.x; this.prev.y = me.y; this.prev.z = me.z;
       }
+      // 팀 게임: 서버가 팀 자리로 옮겨 준 첫 상태를 받으면 카메라를 경기장 가운데 쪽으로 돌린다
+      if (!this.synced && this.level?.teamSpawns) input.camYaw = me.yaw;
       if (this.synced) { this.stats.corrections++; if (jump < 4) this.stats.errorSum += jump; }
       this.synced = true;
     }
@@ -391,6 +393,12 @@ class GameNet {
     const myId = useStore.getState().myId;
     for (const o of latest.players.values()) {
       if (o.id === myId || o.flags & FLAG_HIDDEN) continue;
+      if (o.id >= PROP_ID_BASE) {
+        // 공: 서버처럼 겹친 만큼의 15%만 내가 밀려난다(나머지는 공이 밀려난다)
+        const reach = TEAMBALL.ballR + PLAYER_RADIUS, dx = me.x - o.x, dz = me.z - o.z, d = Math.hypot(dx, dz);
+        if (d < reach && d > 1e-4 && me.y <= TEAMBALL.ballR * 2 - 0.2) sim.nudge(me, (dx / d) * (reach - d) * 0.15, (dz / d) * (reach - d) * 0.15);
+        continue;
+      }
       let ox = o.x, oz = o.z;
       const po = span > 0 ? prev!.players.get(o.id) : undefined;
       if (po && Math.abs(o.x - po.x) + Math.abs(o.z - po.z) < 3) { ox += ((o.x - po.x) / span) * ahead; oz += ((o.z - po.z) / span) * ahead; }

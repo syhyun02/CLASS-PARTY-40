@@ -163,8 +163,13 @@ export function initSoundEvents() {
       const mine = g.scores?.find((x) => x[0] === s.myId)?.[1] ?? 0, before = pg?.scores?.find((x) => x[0] === s.myId)?.[1] ?? 0;
       if (g.taken && mine > before) play(mine - before >= 3 ? 'bigcoin' : 'coin');
       if (g.tails) { const has = g.tails.includes(s.myId), had = pg?.tails?.includes(s.myId) ?? false; if (has !== had) play(has ? 'tail' : 'wrong'); }
+      if (g.goal && g.goal.seq !== pg?.goal?.seq) {
+        const myTeam = room.players.find((x) => x.id === s.myId)?.team;
+        play(g.goal.scorer >= 0 && g.goal.scorer === myTeam ? 'fanfare' : g.goal.into === myTeam ? 'wrong' : 'finish');
+      }
       if (g.quiz && g.quiz.index !== pg?.quiz?.index) play(g.quiz.correct.includes(s.myId) ? 'right' : 'wrong');
     }
+    if (g !== pg && g?.goal && s.myId === null && g.goal.seq !== pg?.goal?.seq) play('finish');
     if (g !== pg && g?.quiz && s.myId === null && g.quiz.index !== pg?.quiz?.index) play('reveal');
     if (s.mine !== p.mine) {
       if (s.mine.passed > p.mine.passed) play('right');

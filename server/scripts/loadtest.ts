@@ -4,7 +4,7 @@
  * 서버 틱 시간, CPU, 메모리, 통신량, 왕복 지연, 스냅샷 수신 주기를 출력한다.
  */
 import { io, type Socket } from 'socket.io-client';
-import { CHEM_DOOR_X, DT, HOVER, QUIZ_PAD_POS, ballPos, buildLevel, moverOffset, chemRowZ, sweeperAngle, sweeperSpeed, TICK_RATE, decodeSnapshot, decodeSelf, fromB64, type CreateRes, type JoinRes, type RoomState, type SelfMsg } from '@shared';
+import { CHEM_DOOR_X, DT, GOAL_DIRS, HOVER, PROP_ID_BASE, TEAMBALL, QUIZ_PAD_POS, ballPos, buildLevel, moverOffset, chemRowZ, sweeperAngle, sweeperSpeed, TICK_RATE, decodeSnapshot, decodeSelf, fromB64, type CreateRes, type JoinRes, type RoomState, type SelfMsg } from '@shared';
 
 const arg = (name: string, def: string) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -35,7 +35,9 @@ host.on('room', (r: RoomState) => { room = r; });
 let taken = new Set<number>();
 let gameMsgs = 0;
 let revealed = 0, explained = 0, wrongTold = 0;
-host.on('g', (m: { state: any }) => { gameMsgs++; taken = new Set(m.state?.taken ?? []); if (m.state?.quiz?.answer !== undefined) revealed++; if (m.state?.quiz?.explain) explained++; });
+let props: [number, number][] = []; // 공 위치(0번 봇이 받은 스냅샷에서)
+let lastTeams: number[] | undefined;
+host.on('g', (m: { state: any }) => { gameMsgs++; if (m.state?.teams) lastTeams = m.state.teams; taken = new Set(m.state?.taken ?? []); if (m.state?.quiz?.answer !== undefined) revealed++; if (m.state?.quiz?.explain) explained++; });
 const created = await new Promise<CreateRes>((res) => host.emit('host:create', { config: { mode: MODE, rounds: ROUNDS, games: [GAME], chem: { units: arg('units', '3,4').split(',').map(Number), levels: ['easy', 'normal', 'hard'] } } }, res));
 if (!created.ok) throw new Error(created.error);
 console.log(`방 ${created.code} 생성, 봇 ${BOTS}명 접속 중...`);
@@ -51,7 +53,7 @@ for (let i = 0; i < BOTS; i++) {
     if (bot.lastSnap) bot.gaps.push(now - bot.lastSnap);
     bot.lastSnap = now; bot.snaps++;
     bot.bytes += snapB64.length + (selfB64?.length ?? 0) + 12;
-    if (i === 0) decodeSnapshot(fromB64(snapB64));
+    if (i === 0) { const sn = decodeSnapshot(fromB64(snapB64)); props = sn.players.filter((p) => p.id >= PROP_ID_BASE && !(p.flags & 8)).map((p) => [p.x, p.z]); }
     if (selfB64) { const m = decodeSelf(fromB64(selfB64)); bot.x = m.s[0]; bot.y = m.s[1]; bot.grounded = m.s[7]; bot.tick = m.t; bot.z = m.s[2]; bot.cp = m.s[13]; bot.ackLag.push(bot.seq - m.q); }
   });
   socket.on('gp', (m: { pass?: { q: number; first: boolean; explain: string }; wrong?: [number, number] }) => { if (m.pass) { bot.passed = m.pass.q + 1; if (m.pass.first) bot.firstTries++; if (m.pass.explain) explained++; } if (m.wrong) { bot.wrong.push(m.wrong); wrongTold++; } });
@@ -164,6 +166,17 @@ const timer = setInterval(() => {
         }
         tz = Math.max(cz - HOVER.halfL + 1.5, Math.min(cz + HOVER.halfL - 1.5, tz));
       }
+      // 팀 공 넣기: 가까운 공 뒤로 돌아가서, 맞은편 팀 골대 쪽으로 밀고 찬다
+      let kick = 0;
+      if (room.levelId === 'teamball' && props.length) {
+        const team = room.players.find((p) => p.id === b.id)?.team ?? 0;
+        const [gx, gz] = GOAL_DIRS[(team + 2) % 4];
+        const goal = [gx * (TEAMBALL.half + 2), gz * (TEAMBALL.half + 2)];
+        const [bx, bz] = props.reduce((a, c) => (Math.hypot(c[0] - b.x, c[1] - b.z) < Math.hypot(a[0] - b.x, a[1] - b.z) ? c : a));
+        let dx = goal[0] - bx, dz = goal[1] - bz; const dl = Math.hypot(dx, dz) || 1; dx /= dl; dz /= dl;
+        const ax = bx - dx * (TEAMBALL.ballR + 1.2), az = bz - dz * (TEAMBALL.ballR + 1.2);
+        if (Math.hypot(ax - b.x, az - b.z) > 1.3 && i % 3 !== 0) { tx = ax; tz = az; } else { tx = bx + dx * 3; tz = bz + dz * 3; if (Math.hypot(bx - b.x, bz - b.z) < TEAMBALL.ballR + 1.3 && (i + Math.floor(lt * 2)) % 4 === 0) kick = 2; }
+      }
       // 가운데 기둥에서는 떨어져 선다
       if (Math.hypot(tx, tz) < 1.6) { const a = i * 2.4; tx += Math.sin(a) * 1.0; tz += Math.cos(a) * 1.0; }
       let jmp = 0, hold = false;
@@ -180,7 +193,7 @@ const timer = setInterval(() => {
       if (ballJump) jmp = 1;
       const dx = tx - b.x, dz = tz - b.z, dl = Math.hypot(dx, dz);
       const sp = dl > 0.3 ? 1 : 0;
-      const act = (room.levelId === 'sumo' || room.levelId === 'tail') && Math.sin(lt * 3 + i) > 0.7 ? 2 : 0;
+      const act = kick || ((room.levelId === 'sumo' || room.levelId === 'tail') && Math.sin(lt * 3 + i) > 0.7 ? 2 : 0);
       b.socket.emit('in', [++b.seq, Math.round((dx / (dl || 1)) * 127 * sp), Math.round((dz / (dl || 1)) * 127 * sp), jmp | act]);
       continue;
     }
@@ -208,6 +221,7 @@ const all = (f: (b: Bot) => number[]) => bots.flatMap(f);
 const gaps = all((b) => b.gaps), rtts = all((b) => b.rtts), lag = all((b) => b.ackLag);
 const finished = room!.players.filter((p) => p.place !== null).length;
 if (room!.levelQuiz) console.log('출제 단원:', [...new Set(room!.levelQuiz.map((q) => q.unit))].join(','), '· 예:', room!.levelQuiz[0].text.slice(0, 40));
+console.log('팀 점수:', JSON.stringify(lastTeams));
 console.log('게임 상태 메시지 수:', gameMsgs, '· 정답 공개:', revealed, '· 해설 포함:', explained, '· 오답 문 알림:', wrongTold, '· 한 번에 맞힌 문 합계:', bots.reduce((n, b) => n + b.firstTries, 0), '· 정답 없이 받은 문제 수:', room!.levelQuiz?.length ?? 0, '· 정답 노출:', JSON.stringify(room!.levelQuiz ?? []).includes('answer'));
 if (room!.lastResult) { const ts = room!.lastResult.map((r) => parseFloat(r.detail)).filter((v) => !isNaN(v)).sort((a, c) => a - c); console.log('탈락 시각 분포(초):', [0, 0.25, 0.5, 0.75, 1].map((q) => ts[Math.min(ts.length - 1, Math.floor(q * ts.length))]).join(' / ')); }
 if (room!.lastResult) console.log('결과 상위 5:', room!.lastResult.slice(0, 5).map((r) => `${r.rank}위 ${r.name} +${r.points} (${r.detail})`).join(' | '), '· 하위:', room!.lastResult.slice(-2).map((r) => `${r.rank}위 +${r.points} (${r.detail})`).join(' | '));

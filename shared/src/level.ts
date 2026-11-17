@@ -135,6 +135,8 @@ export interface LevelDef {
   items?: Item[];
   quiz?: QuizQ[];
   signs?: QuizSign[];
+  /** 팀 게임: 팀마다 출발 위치의 가운데와 바라보는 방향 */
+  teamSpawns?: { x: number; z: number; yaw: number }[];
   /** 호버보드 코스의 장애물 목록(봇과 화면 안내용). gaps는 구멍 벽의 구멍 가운데 x */
   obstacles?: { kind: 'bar' | 'holes' | 'sweeper' | 'balls'; z: number; gaps?: number[]; low?: boolean }[];
   /** 눈에만 보이는 빛의 막(충돌 없음). 화학 미로의 문 */

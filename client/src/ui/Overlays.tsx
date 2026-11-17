@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { GAMES, QUIZ_PADS, chemRowZ, getGame, type RoomState, type RoundRow } from '@shared';
+import { GAMES, QUIZ_PADS, TEAM_COLORS, TEAM_NAMES, chemRowZ, getGame, type RoomState, type RoundRow } from '@shared';
 import { net } from '../game/net';
 import { play, setMusicPref, setSfx, soundPrefs } from '../game/sound';
 import { setQuality, useStore, type Quality } from '../game/store';
@@ -279,12 +279,53 @@ export function ChemMazeHud({ room, myId }: { room: RoomState; myId: number | nu
   );
 }
 
+/** 팀 공 넣기: 남은 시간, 네 팀 점수(내 팀 강조), 골 알림 */
+export function TeamHud({ room, myId }: { room: RoomState; myId: number | null }) {
+  const left = useSecondsLeft(4);
+  const game = useStore((s) => s.game);
+  const scores = game?.teams ?? [0, 0, 0, 0];
+  const myTeam = room.players.find((p) => p.id === myId)?.team ?? null;
+  const goal = game?.goal;
+  const [toast, setToast] = useState<{ seq: number; text: string } | null>(null);
+  useEffect(() => {
+    if (!goal) return;
+    const text = goal.scorer < 0 ? `😅 ${TEAM_NAMES[goal.into]} 골대에 자책골!` : `⚽ ${TEAM_NAMES[goal.scorer]} 팀 골!${goal.scorer === myTeam ? ' 우리 팀!' : ''}`;
+    setToast({ seq: goal.seq, text });
+    const t = setTimeout(() => setToast((x) => (x?.seq === goal.seq ? null : x)), 2200);
+    return () => clearTimeout(t);
+  }, [goal?.seq]);
+  return (
+    <div className={HUD_BAR} style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}>
+      <div className="flex flex-col items-start gap-1">
+        {myTeam !== null && (
+          <div className="chip !text-white" style={{ background: TEAM_COLORS[myTeam] }}>우리 팀: {TEAM_NAMES[myTeam]}</div>
+        )}
+        <div className="flex gap-1">
+          {scores.map((v, t) => (
+            <div key={t} className={`chip flex items-center gap-1 tabular-nums ${t === myTeam ? 'ring-4 ring-white' : ''}`} style={{ background: TEAM_COLORS[t], color: '#fff' }}>
+              {TEAM_NAMES[t]} <b className="text-lg">{v}</b>
+            </div>
+          ))}
+        </div>
+      </div>
+      <Timer left={left} urgent={10} />
+      <div className="w-24" />
+      {toast && (
+        <div className="absolute inset-x-0 top-24 flex justify-center">
+          <div key={toast.seq} className="card animate-pop px-6 py-3 font-display text-2xl">{toast.text}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** 게임 장르에 맞는 경기 중 HUD */
 export function GameHud({ room, myId }: { room: RoomState; myId: number | null }) {
   if (room.gameId === 'tail') return <TailHud room={room} myId={myId} />;
   if (room.gameId === 'answer') return <QuizHud room={room} myId={myId} />;
   if (room.gameId === 'chemmaze') return <ChemMazeHud room={room} myId={myId} />;
   const genre = getGame(room.gameId ?? '')?.genre;
+  if (genre === 'team') return <TeamHud room={room} myId={myId} />;
   if (genre === 'race') return <RaceHud room={room} myId={myId} />;
   if (genre === 'collect') return <CollectHud room={room} myId={myId} />;
   return <SurvivalHud room={room} myId={myId} />;

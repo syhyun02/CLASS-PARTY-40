@@ -1,7 +1,7 @@
 import { useFrame } from '@react-three/fiber';
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { ballPos, chemDoorOrder, moverOffset, sweeperAngle, type LevelDef, type Tile } from '@shared';
+import { PROP_ID_BASE, TEAMBALL, ballPos, chemDoorOrder, moverOffset, sweeperAngle, type LevelDef, type Tile } from '@shared';
 import { net } from '../game/net';
 import { play } from '../game/sound';
 import { useStore } from '../game/store';
@@ -913,6 +913,66 @@ function PadsView({ level }: { level: LevelDef }) {
   );
 }
 
+/** 축구공 무늬: 흰 바탕에 오각형 점박이 */
+function soccerTexture() {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 256;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, 512, 256);
+  g.fillStyle = '#2b2145';
+  const pent = (x: number, y: number, r: number) => { g.beginPath(); for (let i = 0; i < 5; i++) { const a = -Math.PI / 2 + i * 1.2566; g.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); } g.closePath(); g.fill(); };
+  for (let row = 0; row < 3; row++) for (let i = 0; i < 6; i++) pent((i + (row % 2) * 0.5) * 86 + 20, 42 + row * 86, 22);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/** 팀 공 넣기의 공: 서버가 보낸 위치를 따라가며 굴러가는 만큼 회전한다 */
+function TeamBalls({ level }: { level: LevelDef }) {
+  const on = level.id === 'teamball';
+  const MAX = 6;
+  const body = useRef<THREE.InstancedMesh>(null!);
+  const shadow = useRef<THREE.InstancedMesh>(null!);
+  const sphere = useMemo(() => new THREE.SphereGeometry(1, 22, 16), []);
+  const disc = useMemo(() => new THREE.CircleGeometry(1, 20).rotateX(-Math.PI / 2), []);
+  const tex = useMemo(() => soccerTexture(), []);
+  const st = useRef(new Map<number, { x: number; z: number; q: THREE.Quaternion; pop: number }>());
+  useFrame((_, dt) => {
+    if (!on) return;
+    const R = TEAMBALL.ballR;
+    let n = 0;
+    for (const p of net.renderPlayers()) {
+      if (p.id < PROP_ID_BASE || n >= MAX) continue;
+      let b = st.current.get(p.id);
+      if (!b) { b = { x: p.x, z: p.z, q: new THREE.Quaternion(), pop: 0 }; st.current.set(p.id, b); }
+      if (p.flags & 8) { b.pop = 0; b.x = p.x; b.z = p.z; continue; } // 골 뒤 다시 나오기 전
+      b.pop = Math.min(1, b.pop + dt * 4);
+      const dx = p.x - b.x, dz = p.z - b.z, d = Math.hypot(dx, dz);
+      if (d > 1e-4 && d < 3) { AXIS.set(dz / d, 0, -dx / d); BQ.setFromAxisAngle(AXIS, d / R); b.q.premultiply(BQ); }
+      b.x = p.x; b.z = p.z;
+      const sc = R * (b.pop < 1 ? 0.3 + 0.7 * b.pop + Math.sin(b.pop * Math.PI) * 0.25 : 1);
+      M4.compose(V3.set(p.x, R + Math.sin(b.pop * Math.PI) * 0.6, p.z), b.q, S3.setScalar(sc));
+      body.current.setMatrixAt(n, M4);
+      M4.compose(V3.set(p.x, 0.04, p.z), ID_Q4, S3.set(R * 0.95, 1, R * 0.95));
+      shadow.current.setMatrixAt(n, M4);
+      n++;
+    }
+    body.current.count = n; shadow.current.count = n;
+    body.current.instanceMatrix.needsUpdate = true; shadow.current.instanceMatrix.needsUpdate = true;
+  });
+  if (!on) return null;
+  return (
+    <group>
+      <instancedMesh ref={body} args={[sphere, undefined, MAX]} frustumCulled={false} castShadow>
+        <meshLambertMaterial map={tex} />
+      </instancedMesh>
+      <instancedMesh ref={shadow} args={[disc, undefined, MAX]} frustumCulled={false} renderOrder={1}>
+        <meshBasicMaterial color="#1f1640" transparent opacity={0.3} depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
+      </instancedMesh>
+    </group>
+  );
+}
+
 /** 맵 정의(LevelDef)를 그대로 메시로 옮긴다. 고정 바닥은 InstancedMesh 하나로 그린다. */
 export function LevelView({ level }: { level: LevelDef }) {
   const quality = useStore((s) => s.quality);
@@ -955,6 +1015,7 @@ export function LevelView({ level }: { level: LevelDef }) {
       <Tiles level={level} low={low} cheap={cheap} />
       <Bombs level={level} />
       <Balls level={level} />
+      <TeamBalls level={level} />
       <QuizSigns level={level} />
       {(level.curtains ?? []).map((c, i) => (
         <mesh key={i} position={c.p} scale={[c.h[0], c.h[1], 1]}>

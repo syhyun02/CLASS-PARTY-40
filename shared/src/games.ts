@@ -5,10 +5,11 @@ import { buildBomb, buildDodge, buildLast, buildSpinner, buildSumo, buildTail, b
 import type { PublicQ } from './chem/bank';
 import { buildChemMaze, buildMaze } from './levels/maze';
 import { buildHover } from './levels/hover';
+import { buildTeamBall } from './levels/teamball';
 import { buildQuiz } from './levels/quiz';
 
 export type GameMode = 'play' | 'chem';
-export type Genre = 'race' | 'survival' | 'battle' | 'collect' | 'quiz';
+export type Genre = 'race' | 'survival' | 'battle' | 'collect' | 'quiz' | 'team';
 
 /** 미니게임 메타데이터. 새 게임은 여기와 server/src/minigames에 하나씩 추가한다. */
 export interface GameMeta {
@@ -22,6 +23,8 @@ export interface GameMeta {
   implemented: boolean;
   /** 특수 행동 버튼을 쓰는 게임이면 버튼에 적을 이름 */
   action?: string;
+  /** 팀 게임이면 팀 수 */
+  teams?: number;
   /** 화학 모드에서 문제은행 문제를 쓰는 학습형 게임: 문제 수와 보기 수 */
   chem?: { questions: number; options: number };
   buildLevel: (seed: number, quiz?: (PublicQ & { answer?: number; explain?: string })[]) => LevelDef;
@@ -65,6 +68,10 @@ export const GAMES: GameMeta[] = [
   {
     id: 'bomb', name: '펑펑 광장', emoji: '💣', genre: 'survival', modes: ['play', 'chem'],
     howTo: '빨간 원 밖으로 피하거나 벽 뒤에 숨어요!', timeLimit: 76, implemented: true, buildLevel: buildBomb,
+  },
+  {
+    id: 'teamball', name: '팀 공 넣기', emoji: '⚽', genre: 'team', modes: ['play', 'chem'], action: '차기', teams: 4,
+    howTo: '4팀 대결! 공을 밀거나 차서 다른 팀 골대에 넣어요', timeLimit: 90, implemented: true, buildLevel: buildTeamBall,
   },
   {
     id: 'hover', name: '둥둥 호버보드', emoji: '🛸', genre: 'survival', modes: ['play', 'chem'],

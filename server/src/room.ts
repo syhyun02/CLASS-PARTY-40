@@ -27,6 +27,7 @@ const GUESS_TICKS = Math.round(0.1 * TICK_RATE); // 늦는 입력을 직전 입�
 
 class Player implements GamePlayer {
   socket: Socket | null = null;
+  team = -1; // 팀 게임에서의 팀 번호
   score = 0;
   state: PlayerState;
   queue: InputMsg[] = [];
@@ -79,6 +80,8 @@ export class Room {
   private drawn: string[] = [];
   private dirty = true;
   private gameState: unknown = null;
+  /** 스냅샷에 캐릭터와 함께 실어 보내는 물체(공 등) */
+  private props: SnapPlayer[] = [];
   private urgent = true;
   private lastFlush = -999;
   /** 교사가 편집한 문제은행(없으면 기본 문제) */
@@ -231,7 +234,7 @@ export class Room {
         this.setLevel('lobby', 0);
         this.setPhase('lobby', 0);
         this.round = 0; this.gameId = null; this.lastResult = null;
-        for (const p of this.players.values()) { p.active = true; p.done = false; p.out = false; p.place = null; }
+        for (const p of this.players.values()) { p.active = true; p.done = false; p.out = false; p.place = null; p.team = -1; }
         break;
       case 'kick': {
         const p = this.players.get(cmd.id);
@@ -270,6 +273,7 @@ export class Room {
     this.urgent = true;
     this.levelTick = this.tick;
     this.gameState = null;
+    this.props = [];
     this.gameDirty = false;
     for (const p of this.players.values()) {
       p.state = newPlayerState(this.level, p.id);
@@ -285,7 +289,7 @@ export class Room {
     this.gameId = drawGame(this.config.games, this.drawn, this.config.mode);
     this.drawn.push(this.gameId);
     if (this.levelId !== 'lobby') this.setLevel('lobby', 0);
-    for (const p of this.players.values()) { p.done = false; p.out = false; p.place = null; p.active = true; }
+    for (const p of this.players.values()) { p.done = false; p.out = false; p.place = null; p.active = true; p.team = -1; }
     this.setPhase('draw', DRAW_TICKS);
   }
 
@@ -301,8 +305,28 @@ export class Room {
     }
     this.setLevel(this.gameId!, seed, quiz);
     this.roundPlayers = [...this.players.values()];
-    for (const p of this.roundPlayers) { p.active = true; p.done = false; p.out = false; p.place = null; }
+    for (const p of this.roundPlayers) { p.active = true; p.done = false; p.out = false; p.place = null; p.team = -1; }
+    if (meta.teams) this.assignTeams(meta.teams);
     this.setPhase('countdown', COUNTDOWN_TICKS);
+  }
+
+  /** 팀 나누기: 섞어서 차례로 나눈 뒤, 팀마다 자기 출발 위치에 줄지어 세운다 */
+  private assignTeams(n: number) {
+    const list = [...this.roundPlayers];
+    for (let i = list.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); [list[i], list[k]] = [list[k], list[i]]; }
+    const counts = new Array(n).fill(0);
+    list.forEach((p, i) => {
+      p.team = i % n;
+      const k = counts[p.team]++;
+      const sp = this.level.teamSpawns?.[p.team];
+      if (!sp) return;
+      // 가운데를 바라보는 방향 기준으로 옆으로 5명씩, 뒤로 줄을 선다
+      const fx = Math.sin(sp.yaw), fz = Math.cos(sp.yaw), side = (k % 5) - 2, back = Math.floor(k / 5);
+      p.state.x = sp.x + fz * side * 1.6 - fx * back * 1.6;
+      p.state.z = sp.z - fx * side * 1.6 - fz * back * 1.6;
+      p.state.yaw = sp.yaw;
+    });
+    this.dirty = true;
   }
 
   private startPlaying() {
@@ -321,6 +345,8 @@ export class Room {
       tick: () => this.tick,
       seed: this.levelSeed,
       tell: (id, msg) => { this.players.get(id)?.socket?.emit('gp', { key: this.levelKey, ...msg }); },
+      setProps: (list) => { this.props = list; },
+      nudge: (st, dx, dz) => this.sim.nudge(st, dx, dz),
       publish: (st) => { this.gameState = st; this.gameDirty = true; },
     };
     this.runtime = getMinigame(this.gameId!).create(ctx);
@@ -548,6 +574,7 @@ export class Room {
     }
     // 학생마다 [모두의 위치, 내 정확한 상태]를 문자열 하나로 묶어 보낸다.
     // 바이너리를 따로 보내면 socket.io가 조각 두 개로 나눠 보내므로, base64 문자열로 바꿔 한 조각에 담는다.
+    for (const pr of this.props) snap.push(pr);
     const snapB64 = Buffer.from(encodeSnapshot(this.tick, snap)).toString('base64');
     let bytes = 0;
     for (const p of this.players.values()) {
@@ -587,7 +614,7 @@ export class Room {
       levelQuiz: this.levelQuiz?.map((q) => ({ text: q.text, options: q.options, unit: q.unit, level: q.level })) ?? null,
       bankSize: this.bank.length,
       players: [...this.players.values()].map((p) => ({
-        id: p.id, name: p.name, color: p.color, score: p.score, connected: p.connected, active: p.active, place: p.place, out: p.out,
+        id: p.id, name: p.name, color: p.color, score: p.score, connected: p.connected, active: p.active, place: p.place, out: p.out, team: p.team >= 0 ? p.team : null,
       })),
       lastResult: forHost || this.phase === 'result' ? this.lastResult : null,
       history: forHost ? this.history : [],

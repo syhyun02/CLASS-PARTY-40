@@ -16,6 +16,8 @@ export interface PlayerInfo {
   place: number | null;
   /** 이번 라운드에서 탈락해 관전 중 */
   out: boolean;
+  /** 팀 게임에서의 팀 번호(0~3). 팀 게임이 아니면 null */
+  team: number | null;
 }
 
 export interface RoundRow {
@@ -166,8 +168,14 @@ export interface CollectState {
   tails?: number[];
   /** 가장 최근에 채점한 문제 번호와 맞힌 사람 */
   quiz?: { index: number; correct: number[]; answer?: number; explain?: string };
+  /** 팀 공 넣기: 팀별 점수와 가장 최근 골(scorer: 득점 팀, -1이면 자책골 / into: 골을 먹은 팀) */
+  teams?: number[];
+  goal?: { seq: number; scorer: number; into: number };
 }
 export interface GameStateMsg { key: string; state: CollectState | null }
 
 /** 한 학생에게만 보내는 알림(화학 미로): 통과한 문제와 해설, 또는 틀린 문 */
 export interface PersonalMsg { key: string; pass?: { q: number; explain: string; first: boolean }; wrong?: [number, number] }
+
+/** 스냅샷에 캐릭터와 함께 실어 보내는 물체(팀 공 넣기의 공 등)의 번호. 이 번호 이상은 사람이 아니다. */
+export const PROP_ID_BASE = 100;

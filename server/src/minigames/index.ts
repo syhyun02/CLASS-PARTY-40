@@ -5,6 +5,7 @@ import { collectGame } from './collect';
 import { quizGame } from './quiz';
 import { survivalGame } from './survival';
 import { tailGame } from './tail';
+import { teamBallGame } from './teamball';
 import type { MinigameServer } from './types';
 
 /** 구현된 미니게임 등록부. 새 게임은 파일 하나를 만들고 여기에 추가하면 된다. */
@@ -21,6 +22,7 @@ const REGISTRY: Record<string, MinigameServer> = {
   bomb: survivalGame('bomb'),
   dodge: survivalGame('dodge'),
   hover: survivalGame('hover'),
+  teamball: teamBallGame('teamball'),
   treasure: collectGame('treasure'),
 };
 

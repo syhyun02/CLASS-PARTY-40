@@ -1,7 +1,7 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { FLAG_ACT, FLAG_DONE, FLAG_GRAB, FLAG_GROUNDED, FLAG_HELD, FLAG_HIDDEN, FLAG_SHOVED, FLAG_STUN, MAX_PLAYERS } from '@shared';
+import { TEAM_COLORS, FLAG_ACT, FLAG_DONE, FLAG_GRAB, FLAG_GROUNDED, FLAG_HELD, FLAG_HIDDEN, FLAG_SHOVED, FLAG_STUN, MAX_PLAYERS } from '@shared';
 import { net } from '../game/net';
 import { useStore } from '../game/store';
 
@@ -26,7 +26,8 @@ const col2 = new THREE.Color();
 const WHITE = new THREE.Color('#ffffff');
 const LEAF = new THREE.Color('#40c057');
 const FACE_DIST = 26; // 이보다 멀면 얼굴 부위를 생략한다(m)
-const LIMBS = 12; // 발 2 + 손 2 + 배 1 + 머리 장식 3 + 꼬리 3 + 엉덩이 꼬리 1
+const LIMBS = 13; // 발 2 + 손 2 + 배 1 + 머리 장식 3 + 꼬리 3 + 엉덩이 꼬리 1 + 팀 머리띠 1
+const TEAM_C = TEAM_COLORS.map((c) => new THREE.Color(c));
 const PINK = new THREE.Color('#ff6f9f');
 const BOW = new THREE.Color('#ff4f8b');
 const FLIP = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI);
@@ -130,6 +131,8 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
   const darks = useRef<THREE.InstancedMesh>(null!);
   const cheeks = useRef<THREE.InstancedMesh>(null!);
   const arcs = useRef<THREE.InstancedMesh>(null!);
+  const rings = useRef<THREE.InstancedMesh>(null!);
+  const ringGeo = useMemo(() => new THREE.RingGeometry(0.5, 0.72, 24).rotateX(-Math.PI / 2), []);
   const shadows = useRef<THREE.InstancedMesh>(null!);
   const marker = useRef<THREE.Mesh>(null!);
   const tags = useRef<THREE.InstancedMesh>(null!);
@@ -139,7 +142,7 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
   const tagGeo = useMemo(() => { const g = new THREE.PlaneGeometry(1, 1); g.setAttribute('aTag', new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3)); return g; }, []);
   const camera = useThree((st) => st.camera);
   const usedSet = useRef(new Set<number>());
-  const infoCache = useRef<{ src: unknown; map: Map<number, { id: number; name: string; color: string; score: number }> }>({ src: null, map: new Map() });
+  const infoCache = useRef<{ src: unknown; map: Map<number, { id: number; name: string; color: string; score: number; team?: number | null }> }>({ src: null, map: new Map() });
   const tailCache = useRef<{ src: number[] | undefined; set: Set<number> | null }>({ src: undefined, set: null });
 
   useEffect(() => () => { atlas.tex.dispose(); tagMat.dispose(); tagGeo.dispose(); }, [atlas, tagMat, tagGeo]);
@@ -168,7 +171,7 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
     const camPos = state.camera.position;
     const used = usedSet.current;
     used.clear();
-    let n = 0, shadowN = 0, tagN = 0;
+    let n = 0, shadowN = 0, tagN = 0, ringN = 0;
     let meShown = false;
     for (const p of list) {
       if (n >= N) break;
@@ -272,6 +275,12 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
         colorAt(limbs.current, L + 11, col2.copy(col).lerp(WHITE, 0.5));
       }
 
+      // 팀 게임: 팀 색 머리띠
+      const team = pi.team ?? -1;
+      if (team >= 0) {
+        part(limbs.current, L + 12, 0, HY + 0.15, 0.02, 0.495, 0.075, 0.465);
+        colorAt(limbs.current, L + 12, TEAM_C[team]);
+      }
       // 머리 장식 7종: 번호마다 달라서 같은 색이어도 구별된다
       const bob = headBob + (airborne ? 0.04 : 0);
       const TOP = HY + 0.4;
@@ -355,6 +364,13 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       const sh = Math.max(0.15, 0.52 - h * 0.08);
       local.compose(v.set(p.x, a.groundY + 0.03, p.z), ID_Q, s.set(sh, 1, sh));
       if (h <= 6) shadows.current.setMatrixAt(shadowN++, local);
+      if (team >= 0) {
+        // 팀 색 발밑 고리
+        local.compose(v.set(p.x, a.groundY + 0.05, p.z), ID_Q, s.set(1, 1, 1));
+        rings.current.setMatrixAt(ringN, local);
+        rings.current.setColorAt(ringN, TEAM_C[team]);
+        ringN++;
+      }
 
       // 닉네임표: 가까운 캐릭터만 보인다
       const d = camera.position.distanceTo(v.set(p.x, p.y, p.z));
@@ -376,6 +392,9 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       n++;
     }
     marker.current.visible = meShown;
+    rings.current.count = ringN;
+    rings.current.instanceMatrix.needsUpdate = true;
+    if (rings.current.instanceColor) rings.current.instanceColor.needsUpdate = true;
     tags.current.count = tagN;
     tags.current.instanceMatrix.needsUpdate = true;
     (tagGeo.getAttribute('aTag') as THREE.InstancedBufferAttribute).needsUpdate = true;
@@ -428,6 +447,9 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
         <meshBasicMaterial color="#ffd84d" />
       </mesh>
       <instancedMesh ref={tags} args={[tagGeo, tagMat, N]} frustumCulled={false} renderOrder={5} />
+      <instancedMesh ref={rings} args={[ringGeo, undefined, N]} frustumCulled={false} renderOrder={2}>
+        <meshBasicMaterial transparent opacity={0.9} depthWrite={false} polygonOffset polygonOffsetFactor={-3} />
+      </instancedMesh>
     </group>
   );
 }

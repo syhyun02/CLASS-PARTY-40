@@ -1,4 +1,4 @@
-import type { LevelDef, PlayerInput, PlayerState, RoundRow } from '@shared';
+import type { LevelDef, PlayerInput, PlayerState, RoundRow, SnapPlayer } from '@shared';
 
 /** 미니게임이 방에서 볼 수 있는 플레이어 */
 export interface GamePlayer {
@@ -16,6 +16,8 @@ export interface GamePlayer {
   place: number | null;
   /** 탈락해서 더 이상 경기장에 없음(관전) */
   out: boolean;
+  /** 팀 게임의 팀 번호(-1: 없음) */
+  team: number;
 }
 
 export interface GameCtx {
@@ -33,6 +35,10 @@ export interface GameCtx {
   levelTime(): number;
   /** 게임별 실시간 상태를 전원에게 보낸다(자주 불러도 서버가 묶어서 보낸다) */
   publish(state: unknown): void;
+  /** 스냅샷에 캐릭터와 함께 보낼 물체(번호는 PROP_ID_BASE 이상) */
+  setProps(list: SnapPlayer[]): void;
+  /** 캐릭터를 벽을 뚫지 않게 살짝 민다 */
+  nudge(state: PlayerState, dx: number, dz: number): void;
   /** 한 학생에게만 알린다 */
   tell(id: number, msg: Record<string, unknown>): void;
   /** 이번 맵의 시드 */
