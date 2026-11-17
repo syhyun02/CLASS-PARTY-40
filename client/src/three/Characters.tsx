@@ -25,6 +25,7 @@ const col = new THREE.Color();
 const col2 = new THREE.Color();
 const WHITE = new THREE.Color('#ffffff');
 const LEAF = new THREE.Color('#40c057');
+const FACE_DIST = 26; // 이보다 멀면 얼굴 부위를 생략한다(m)
 const LIMBS = 12; // 발 2 + 손 2 + 배 1 + 머리 장식 3 + 꼬리 3 + 엉덩이 꼬리 1
 const PINK = new THREE.Color('#ff6f9f');
 const BOW = new THREE.Color('#ff4f8b');
@@ -32,40 +33,93 @@ const FLIP = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1),
 const TAIL = new THREE.Color('#ff922b');
 const TAIL_TIP = new THREE.Color('#fff4e6');
 const ID_Q = new THREE.Quaternion();
+const frustum = new THREE.Frustum();
+const projScreen = new THREE.Matrix4();
+const bound = new THREE.Sphere(new THREE.Vector3(), 1.6);
 
+/**
+ * 부위 기록기: 쓰는 부위만 앞에서부터 차례로 채운다(빈자리를 크기 0으로 남기면 GPU가 그것까지 그린다).
+ * 코드에서는 "몇 번째 캐릭터의 몇 번 부위"라는 원래 번호(i)로 부르고, 실제 자리는 여기서 정한다.
+ */
+const slots = new Map<THREE.InstancedMesh, { n: number; map: Map<number, number> }>();
+function slotOf(mesh: THREE.InstancedMesh, i: number): number {
+  let st = slots.get(mesh);
+  if (!st) { st = { n: 0, map: new Map() }; slots.set(mesh, st); }
+  let k = st.map.get(i);
+  if (k === undefined) { k = st.n++; st.map.set(i, k); }
+  return k;
+}
+function colorAt(mesh: THREE.InstancedMesh, i: number, c: THREE.Color) {
+  const k = slots.get(mesh)?.map.get(i);
+  if (k !== undefined) mesh.setColorAt(k, c);
+}
 function part(mesh: THREE.InstancedMesh, i: number, x: number, y: number, z: number, sx: number, sy: number, sz: number) {
   local.compose(v.set(x, y, z), ID_Q, s.set(sx, sy, sz));
   out.multiplyMatrices(root, local);
-  mesh.setMatrixAt(i, out);
+  mesh.setMatrixAt(slotOf(mesh, i), out);
 }
 
 /** 회전이 있는 부위(웃는 입, 웃는 눈)용 */
 function partQ(mesh: THREE.InstancedMesh, i: number, x: number, y: number, z: number, sx: number, sy: number, sz: number, rot: THREE.Quaternion) {
   local.compose(v.set(x, y, z), rot, s.set(sx, sy, sz));
   out.multiplyMatrices(root, local);
-  mesh.setMatrixAt(i, out);
+  mesh.setMatrixAt(slotOf(mesh, i), out);
 }
 
-function makeNameTexture(name: string) {
+/**
+ * 닉네임표 묶음: 이름 40개를 그림 한 장(가로 4칸 × 세로 16칸)에 그려 두고, 이름표 전부를 그리기 명령 한 번으로 그린다.
+ * 이름표는 항상 화면을 바라보고(빌보드), 칸마다 위치·크기·투명도만 다르다.
+ */
+const TAG_COLS = 4, TAG_ROWS = 16, TAG_W = 256, TAG_H = 64;
+function makeTagAtlas() {
   const c = document.createElement('canvas');
-  c.width = 256; c.height = 64;
-  const g = c.getContext('2d')!;
+  c.width = TAG_W * TAG_COLS; c.height = TAG_H * TAG_ROWS;
+  const tex = new THREE.CanvasTexture(c);
+  tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+  return { c, tex, names: new Map<number, string>() };
+}
+function drawTag(atlas: ReturnType<typeof makeTagAtlas>, slot: number, name: string) {
+  const g = atlas.c.getContext('2d')!;
+  const x = (slot % TAG_COLS) * TAG_W, y = Math.floor(slot / TAG_COLS) * TAG_H;
+  g.clearRect(x, y, TAG_W, TAG_H);
   g.font = '700 34px Jua, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
   g.textAlign = 'center'; g.textBaseline = 'middle';
   g.lineJoin = 'round'; g.lineWidth = 8; g.strokeStyle = 'rgba(59,47,99,0.9)';
-  g.strokeText(name, 128, 34);
+  g.strokeText(name, x + TAG_W / 2, y + 34, TAG_W - 12);
   g.fillStyle = '#ffffff';
-  g.fillText(name, 128, 34);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
+  g.fillText(name, x + TAG_W / 2, y + 34, TAG_W - 12);
+  atlas.tex.needsUpdate = true;
+}
+function makeTagMaterial(map: THREE.Texture) {
+  return new THREE.ShaderMaterial({
+    uniforms: { map: { value: map } },
+    transparent: true, depthWrite: false,
+    vertexShader: `
+      attribute vec3 aTag; // 칸 열, 칸 행, 투명도
+      varying vec2 vUv; varying float vA;
+      void main() {
+        vec4 c = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        c.xy += position.xy * vec2(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz));
+        gl_Position = projectionMatrix * c;
+        vUv = vec2((aTag.x + uv.x) / ${TAG_COLS}.0, 1.0 - (aTag.y + 1.0 - uv.y) / ${TAG_ROWS}.0);
+        vA = aTag.z;
+      }`,
+    fragmentShader: `
+      uniform sampler2D map; varying vec2 vUv; varying float vA;
+      void main() { vec4 t = texture2D(map, vUv); if (t.a * vA < 0.02) discard; gl_FragColor = vec4(t.rgb, t.a * vA); }`,
+  });
 }
 
 export function Characters({ nameRange = 22 }: { nameRange?: number }) {
   const quality = useStore((st) => st.quality);
-  const seg = quality === 'low' ? [12, 8] : [24, 16];
+  // 화질별 구 정밀도: 몸통은 보통 16×12(약 350개 삼각형), 작은 부위는 8×6이면 충분하다
+  const seg = quality === 'low' ? [12, 8] : quality === 'medium' ? [16, 12] : [24, 16];
   const sphere = useMemo(() => new THREE.SphereGeometry(1, seg[0], seg[1]), [seg[0], seg[1]]);
-  const small = useMemo(() => new THREE.SphereGeometry(1, quality === 'low' ? 8 : 12, quality === 'low' ? 6 : 9), [quality]);
+  const small = useMemo(() => new THREE.SphereGeometry(1, quality === 'high' ? 12 : 8, quality === 'high' ? 9 : 6), [quality]);
+  // 테두리는 가장자리 윤곽만 보이므로 몸통보다 거친 구로 충분하다
+  const outlineGeo = useMemo(() => new THREE.SphereGeometry(1, quality === 'high' ? 18 : 12, quality === 'high' ? 12 : 8), [quality]);
+  // 눈 반짝임·눈동자·볼처럼 아주 작은 부위용
+  const tiny = useMemo(() => new THREE.SphereGeometry(1, quality === 'high' ? 10 : 6, quality === 'high' ? 7 : 4), [quality]);
   const disc = useMemo(() => new THREE.CircleGeometry(1, 16).rotateX(-Math.PI / 2), []);
   // 반원 고리: 그대로 두면 웃는 눈(^), 뒤집으면 웃는 입
   const arc = useMemo(() => new THREE.TorusGeometry(1, 0.26, 5, 10, Math.PI), []);
@@ -78,15 +132,17 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
   const arcs = useRef<THREE.InstancedMesh>(null!);
   const shadows = useRef<THREE.InstancedMesh>(null!);
   const marker = useRef<THREE.Mesh>(null!);
-  const tags = useRef<THREE.Group>(null!);
+  const tags = useRef<THREE.InstancedMesh>(null!);
   const anims = useRef(new Map<number, Anim>());
-  const sprites = useRef(new Map<number, { sprite: THREE.Sprite; name: string }>());
+  const atlas = useMemo(() => makeTagAtlas(), []);
+  const tagMat = useMemo(() => makeTagMaterial(atlas.tex), [atlas]);
+  const tagGeo = useMemo(() => { const g = new THREE.PlaneGeometry(1, 1); g.setAttribute('aTag', new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3)); return g; }, []);
   const camera = useThree((st) => st.camera);
   const usedSet = useRef(new Set<number>());
   const infoCache = useRef<{ src: unknown; map: Map<number, { id: number; name: string; color: string; score: number }> }>({ src: null, map: new Map() });
   const tailCache = useRef<{ src: number[] | undefined; set: Set<number> | null }>({ src: undefined, set: null });
 
-  useEffect(() => () => { for (const t of sprites.current.values()) { t.sprite.material.map?.dispose(); t.sprite.material.dispose(); } }, []);
+  useEffect(() => () => { atlas.tex.dispose(); tagMat.dispose(); tagGeo.dispose(); }, [atlas, tagMat, tagGeo]);
 
   useFrame((state, dtRaw) => {
     const dt = Math.min(0.1, dtRaw);
@@ -104,9 +160,15 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
     const tailIds = st.game?.tails;
     if (tailIds !== tailCache.current.src) tailCache.current = { src: tailIds, set: tailIds ? new Set(tailIds) : null };
     const tails = room?.phase === 'playing' ? tailCache.current.set : null;
+    for (const st of slots.values()) { st.n = 0; st.map.clear(); }
+    // 화면 밖 캐릭터는 그리지 않는다
+    state.camera.updateMatrixWorld();
+    projScreen.multiplyMatrices(state.camera.projectionMatrix, state.camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(projScreen);
+    const camPos = state.camera.position;
     const used = usedSet.current;
     used.clear();
-    let n = 0;
+    let n = 0, shadowN = 0, tagN = 0;
     let meShown = false;
     for (const p of list) {
       if (n >= N) break;
@@ -132,6 +194,15 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       const lose = podium.length > 0 && !win;
       const hop = win && grounded && a.speed < 0.5 ? Math.abs(Math.sin(time * 6 + p.id)) * 0.35 : 0;
 
+      bound.center.set(p.x, p.y + 0.9, p.z);
+      const visible = frustum.intersectsSphere(bound);
+      const camD = camPos.distanceTo(bound.center);
+      const far = camD > FACE_DIST; // 멀면 눈·입·볼 같은 작은 부위는 몇 픽셀이라 생략한다
+      if (!visible) {
+        if (p.isMe) meShown = false;
+        n++;
+        continue;
+      }
       // 몸 전체: 위치 → 방향 → (넘어질 때) 구르기 → 찌그러짐
       const airborne = !grounded && a.air > 0.06;
       const squashY = stun ? 1 : airborne ? 1.08 : 1 - run * 0.04 * Math.sin(a.phase * 2) - (lose ? 0.08 : 0);
@@ -155,17 +226,17 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       part(bodies.current, B, 0, 0.42, 0, 0.4, 0.39, 0.38);
       part(bodies.current, B + 1, 0, HY, 0.02, 0.47, 0.43, 0.44);
       col.set(pi.color);
-      bodies.current.setColorAt(B, col); bodies.current.setColorAt(B + 1, col);
+      colorAt(bodies.current, B, col); colorAt(bodies.current, B + 1, col);
       if (outlines.current) {
         part(outlines.current, B, 0, 0.42, 0, 0.43, 0.42, 0.41);
         part(outlines.current, B + 1, 0, HY, 0.02, 0.5, 0.46, 0.47);
         col2.copy(col).multiplyScalar(0.42);
-        outlines.current.setColorAt(B, col2); outlines.current.setColorAt(B + 1, col2);
+        colorAt(outlines.current, B, col2); colorAt(outlines.current, B + 1, col2);
       }
       const L = n * LIMBS;
       // 밝은 배
       part(limbs.current, L + 4, 0, 0.38, 0.17, 0.29, 0.27, 0.25);
-      limbs.current.setColorAt(L + 4, col2.copy(col).lerp(WHITE, 0.62));
+      colorAt(limbs.current, L + 4, col2.copy(col).lerp(WHITE, 0.62));
       // 팔다리(몸보다 조금 진한 색)
       col2.copy(col).multiplyScalar(0.8);
       const stride = Math.sin(a.phase) * 0.22 * run, lift = Math.max(0, Math.cos(a.phase)) * 0.14 * run;
@@ -187,19 +258,18 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
         part(limbs.current, L + 2, -0.44, 0.46 + handUp, -stride * 0.9, 0.125, 0.125, 0.125);
         part(limbs.current, L + 3, 0.44, 0.46 + handUp, stride * 0.9, 0.125, 0.125, 0.125);
       }
-      for (let k = 0; k < 4; k++) limbs.current.setColorAt(L + k, col2);
+      for (let k = 0; k < 4; k++) colorAt(limbs.current, L + k, col2);
 
-      for (let k = 5; k < LIMBS; k++) limbs.current.setMatrixAt(L + k, ZERO);
       // 꼬리 지키기의 큰 꼬리, 아니면 작은 엉덩이 꼬리
       if (tails && tails.has(p.id)) {
         const wag = Math.sin(time * 9 + p.id) * 0.14;
         part(limbs.current, L + 8, wag * 0.4, 0.38, -0.46, 0.16, 0.16, 0.2);
         part(limbs.current, L + 9, wag, 0.52, -0.72, 0.19, 0.19, 0.22);
         part(limbs.current, L + 10, wag * 1.6, 0.7, -0.94, 0.14, 0.14, 0.16);
-        limbs.current.setColorAt(L + 8, TAIL); limbs.current.setColorAt(L + 9, TAIL); limbs.current.setColorAt(L + 10, TAIL_TIP);
+        colorAt(limbs.current, L + 8, TAIL); colorAt(limbs.current, L + 9, TAIL); colorAt(limbs.current, L + 10, TAIL_TIP);
       } else {
         part(limbs.current, L + 11, Math.sin(a.phase * 2) * 0.03 * run, 0.34, -0.39, 0.1, 0.1, 0.1);
-        limbs.current.setColorAt(L + 11, col2.copy(col).lerp(WHITE, 0.5));
+        colorAt(limbs.current, L + 11, col2.copy(col).lerp(WHITE, 0.5));
       }
 
       // 머리 장식 7종: 번호마다 달라서 같은 색이어도 구별된다
@@ -210,100 +280,93 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       if (kind === 0) { // 곰 귀
         part(limbs.current, L + 5, -0.3, TOP - 0.06 + bob, 0, 0.15, 0.15, 0.09);
         part(limbs.current, L + 6, 0.3, TOP - 0.06 + bob, 0, 0.15, 0.15, 0.09);
-        limbs.current.setColorAt(L + 5, col2); limbs.current.setColorAt(L + 6, col2);
+        colorAt(limbs.current, L + 5, col2); colorAt(limbs.current, L + 6, col2);
       } else if (kind === 1) { // 토끼 귀(달릴 때 뒤로 젖혀진다)
         const back = -0.08 - run * 0.14;
         part(limbs.current, L + 5, -0.17, TOP + 0.2 + bob, back, 0.085, 0.3, 0.07);
         part(limbs.current, L + 6, 0.17, TOP + 0.2 + bob, back, 0.085, 0.3, 0.07);
-        limbs.current.setColorAt(L + 5, col2); limbs.current.setColorAt(L + 6, col2);
+        colorAt(limbs.current, L + 5, col2); colorAt(limbs.current, L + 6, col2);
       } else if (kind === 2) { // 방울
         part(limbs.current, L + 5, 0, TOP + 0.1 + bob * 2, 0, 0.16, 0.16, 0.16);
-        limbs.current.setColorAt(L + 5, WHITE);
+        colorAt(limbs.current, L + 5, WHITE);
       } else if (kind === 3) { // 볏
         col2.copy(col).offsetHSL(0.5, 0, 0);
         for (let k = 0; k < 3; k++) {
           part(limbs.current, L + 5 + k, 0, TOP + 0.04 - Math.abs(k - 1) * 0.07 + bob, (k - 1) * 0.17, 0.07, 0.13, 0.11);
-          limbs.current.setColorAt(L + 5 + k, col2);
+          colorAt(limbs.current, L + 5 + k, col2);
         }
       } else if (kind === 4) { // 양갈래
         part(limbs.current, L + 5, -0.46, HY + 0.24 + bob, -0.06, 0.17, 0.17, 0.17);
         part(limbs.current, L + 6, 0.46, HY + 0.24 + bob, -0.06, 0.17, 0.17, 0.17);
-        limbs.current.setColorAt(L + 5, col2); limbs.current.setColorAt(L + 6, col2);
+        colorAt(limbs.current, L + 5, col2); colorAt(limbs.current, L + 6, col2);
       } else if (kind === 5) { // 새싹
         part(limbs.current, L + 5, -0.11, TOP + 0.13 + bob * 2, 0, 0.13, 0.045, 0.08);
         part(limbs.current, L + 6, 0.11, TOP + 0.13 + bob * 2, 0, 0.13, 0.045, 0.08);
         part(limbs.current, L + 7, 0, TOP + 0.05 + bob, 0, 0.035, 0.08, 0.035);
-        for (let k = 5; k < 8; k++) limbs.current.setColorAt(L + k, LEAF);
+        for (let k = 5; k < 8; k++) colorAt(limbs.current, L + k, LEAF);
       } else { // 리본
         part(limbs.current, L + 5, -0.15, TOP + 0.02 + bob, 0.05, 0.14, 0.1, 0.07);
         part(limbs.current, L + 6, 0.15, TOP + 0.02 + bob, 0.05, 0.14, 0.1, 0.07);
         part(limbs.current, L + 7, 0, TOP + 0.02 + bob, 0.07, 0.06, 0.06, 0.06);
-        limbs.current.setColorAt(L + 5, BOW); limbs.current.setColorAt(L + 6, BOW); limbs.current.setColorAt(L + 7, WHITE);
+        colorAt(limbs.current, L + 5, BOW); colorAt(limbs.current, L + 6, BOW); colorAt(limbs.current, L + 7, WHITE);
       }
 
-      // ---- 얼굴: 까맣고 반짝이는 큰 눈, 볼터치, 상황에 따라 바뀌는 입 ----
-      const blink = !stun && !win && (time * 0.5 + p.id * 0.37) % 1 > 0.96;
-      const held = (p.flags & FLAG_HELD) !== 0 || shoved;
-      const EX = 0.175, EY = HY + 0.02, EZ = 0.415;
-      const W = n * 6, D = n * 3, A = n * 3, C = n * 3;
-      for (let k = 0; k < 6; k++) whites.current.setMatrixAt(W + k, ZERO);
-      for (let k = 0; k < 3; k++) { darks.current.setMatrixAt(D + k, ZERO); arcs.current.setMatrixAt(A + k, ZERO); }
-      if (win || blink) {
-        // 웃는 눈 ^ ^
-        partQ(arcs.current, A + 1, -EX, EY - 0.02, EZ + 0.02, 0.075, 0.07, 0.06, ID_Q);
-        partQ(arcs.current, A + 2, EX, EY - 0.02, EZ + 0.02, 0.075, 0.07, 0.06, ID_Q);
-      } else if (stun) {
-        // 휘둥그레진 눈: 흰자 위에 작은 눈동자가 빙글
-        const sx = Math.cos(time * 14) * 0.03, sy = Math.sin(time * 14) * 0.03;
-        part(whites.current, W + 4, -EX, EY, EZ - 0.01, 0.12, 0.13, 0.05);
-        part(whites.current, W + 5, EX, EY, EZ - 0.01, 0.12, 0.13, 0.05);
-        part(darks.current, D, -EX + sx, EY + sy, EZ + 0.035, 0.04, 0.04, 0.02);
-        part(darks.current, D + 1, EX - sx, EY - sy, EZ + 0.035, 0.04, 0.04, 0.02);
-      } else {
-        const big = held || airborne ? 1.12 : 1, down = lose ? -0.03 : 0;
-        part(darks.current, D, -EX, EY + down, EZ, 0.088 * big, 0.112 * big, 0.05);
-        part(darks.current, D + 1, EX, EY + down, EZ, 0.088 * big, 0.112 * big, 0.05);
-        // 반짝임 두 개씩
-        part(whites.current, W, -EX - 0.03, EY + 0.045 + down, EZ + 0.045, 0.034, 0.034, 0.012);
-        part(whites.current, W + 1, EX - 0.03, EY + 0.045 + down, EZ + 0.045, 0.034, 0.034, 0.012);
-        part(whites.current, W + 2, -EX + 0.035, EY - 0.04 + down, EZ + 0.045, 0.016, 0.016, 0.01);
-        part(whites.current, W + 3, EX + 0.035, EY - 0.04 + down, EZ + 0.045, 0.016, 0.016, 0.01);
+      if (!far) {
+        // ---- 얼굴: 까맣고 반짝이는 큰 눈, 볼터치, 상황에 따라 바뀌는 입 ----
+        const blink = !stun && !win && (time * 0.5 + p.id * 0.37) % 1 > 0.96;
+        const held = (p.flags & FLAG_HELD) !== 0 || shoved;
+        const EX = 0.175, EY = HY + 0.02, EZ = 0.415;
+        const W = n * 6, D = n * 3, A = n * 3, C = n * 3;
+        if (win || blink) {
+          // 웃는 눈 ^ ^
+          partQ(arcs.current, A + 1, -EX, EY - 0.02, EZ + 0.02, 0.075, 0.07, 0.06, ID_Q);
+          partQ(arcs.current, A + 2, EX, EY - 0.02, EZ + 0.02, 0.075, 0.07, 0.06, ID_Q);
+        } else if (stun) {
+          // 휘둥그레진 눈: 흰자 위에 작은 눈동자가 빙글
+          const sx = Math.cos(time * 14) * 0.03, sy = Math.sin(time * 14) * 0.03;
+          part(whites.current, W + 4, -EX, EY, EZ - 0.01, 0.12, 0.13, 0.05);
+          part(whites.current, W + 5, EX, EY, EZ - 0.01, 0.12, 0.13, 0.05);
+          part(darks.current, D, -EX + sx, EY + sy, EZ + 0.035, 0.04, 0.04, 0.02);
+          part(darks.current, D + 1, EX - sx, EY - sy, EZ + 0.035, 0.04, 0.04, 0.02);
+        } else {
+          const big = held || airborne ? 1.12 : 1, down = lose ? -0.03 : 0;
+          part(darks.current, D, -EX, EY + down, EZ, 0.088 * big, 0.112 * big, 0.05);
+          part(darks.current, D + 1, EX, EY + down, EZ, 0.088 * big, 0.112 * big, 0.05);
+          // 반짝임 두 개씩
+          part(whites.current, W, -EX - 0.03, EY + 0.045 + down, EZ + 0.045, 0.034, 0.034, 0.012);
+          part(whites.current, W + 1, EX - 0.03, EY + 0.045 + down, EZ + 0.045, 0.034, 0.034, 0.012);
+          part(whites.current, W + 2, -EX + 0.035, EY - 0.04 + down, EZ + 0.045, 0.016, 0.016, 0.01);
+          part(whites.current, W + 3, EX + 0.035, EY - 0.04 + down, EZ + 0.045, 0.016, 0.016, 0.01);
+        }
+        // 입: 평소엔 미소, 뛰거나 놀라면 동그랗게, 이기면 활짝, 지면 시무룩
+        const MY = HY - 0.13, MZ = 0.455;
+        if (stun || held || airborne) part(darks.current, D + 2, 0, MY - 0.01, MZ - 0.02, 0.04, 0.05, 0.03);
+        else if (lose) partQ(arcs.current, A, 0, MY - 0.04, MZ, 0.05, 0.04, 0.05, ID_Q);
+        else partQ(arcs.current, A, 0, MY + 0.02, MZ, win ? 0.085 : 0.06, win ? 0.075 : 0.045, 0.05, FLIP);
+        // 볼터치 + 머리의 윤기
+        part(cheeks.current, C, -0.31, HY - 0.1, 0.33, 0.085, 0.055, 0.04);
+        part(cheeks.current, C + 1, 0.31, HY - 0.1, 0.33, 0.085, 0.055, 0.04);
+        part(cheeks.current, C + 2, -0.2, HY + 0.24, 0.3, 0.11, 0.06, 0.05);
+        colorAt(cheeks.current, C, PINK); colorAt(cheeks.current, C + 1, PINK); colorAt(cheeks.current, C + 2, WHITE);
       }
-      // 입: 평소엔 미소, 뛰거나 놀라면 동그랗게, 이기면 활짝, 지면 시무룩
-      const MY = HY - 0.13, MZ = 0.455;
-      if (stun || held || airborne) part(darks.current, D + 2, 0, MY - 0.01, MZ - 0.02, 0.04, 0.05, 0.03);
-      else if (lose) partQ(arcs.current, A, 0, MY - 0.04, MZ, 0.05, 0.04, 0.05, ID_Q);
-      else partQ(arcs.current, A, 0, MY + 0.02, MZ, win ? 0.085 : 0.06, win ? 0.075 : 0.045, 0.05, FLIP);
-      // 볼터치 + 머리의 윤기
-      part(cheeks.current, C, -0.31, HY - 0.1, 0.33, 0.085, 0.055, 0.04);
-      part(cheeks.current, C + 1, 0.31, HY - 0.1, 0.33, 0.085, 0.055, 0.04);
-      part(cheeks.current, C + 2, -0.2, HY + 0.24, 0.3, 0.11, 0.06, 0.05);
-      cheeks.current.setColorAt(C, PINK); cheeks.current.setColorAt(C + 1, PINK); cheeks.current.setColorAt(C + 2, WHITE);
 
       // 바닥 그림자: 높이 뛸수록 작아져서 착지 지점을 가늠하게 해 준다
       const h = Math.max(0, p.y - a.groundY);
       const sh = Math.max(0.15, 0.52 - h * 0.08);
       local.compose(v.set(p.x, a.groundY + 0.03, p.z), ID_Q, s.set(sh, 1, sh));
-      shadows.current.setMatrixAt(n, h > 6 ? ZERO : local);
+      if (h <= 6) shadows.current.setMatrixAt(shadowN++, local);
 
       // 닉네임표: 가까운 캐릭터만 보인다
-      let tag = sprites.current.get(p.id);
-      if (!tag || tag.name !== pi.name) {
-        if (tag) { tags.current.remove(tag.sprite); tag.sprite.material.map?.dispose(); tag.sprite.material.dispose(); }
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeNameTexture(pi.name), depthWrite: false, transparent: true }));
-        sprite.scale.set(2.2, 0.55, 1);
-        sprite.renderOrder = 5;
-        tags.current.add(sprite);
-        tag = { sprite, name: pi.name };
-        sprites.current.set(p.id, tag);
-      }
       const d = camera.position.distanceTo(v.set(p.x, p.y, p.z));
-      tag.sprite.visible = !p.isMe && d < nameRange;
-      if (tag.sprite.visible) {
-        tag.sprite.position.set(p.x, py + 2.0, p.z);
-        tag.sprite.material.opacity = Math.min(1, (nameRange - d) / 4);
+      if (!p.isMe && d < nameRange && tagN < N) {
+        const slot = p.id % (TAG_COLS * TAG_ROWS);
+        if (atlas.names.get(slot) !== pi.name) { atlas.names.set(slot, pi.name); drawTag(atlas, slot, pi.name); }
         const k = nameRange > 30 ? Math.max(1, d / 16) : 1; // 교사용 원경에서는 글자를 키운다
-        tag.sprite.scale.set(2.2 * k, 0.55 * k, 1);
+        local.compose(v.set(p.x, py + 2.0, p.z), ID_Q, s.set(2.2 * k, 0.55 * k, 1));
+        tags.current.setMatrixAt(tagN, local);
+        const at = tagGeo.getAttribute('aTag') as THREE.InstancedBufferAttribute;
+        at.setXYZ(tagN, slot % TAG_COLS, Math.floor(slot / TAG_COLS), Math.min(1, (nameRange - d) / 4));
+        tagN++;
       }
       if (p.isMe) {
         meShown = true;
@@ -313,7 +376,9 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       n++;
     }
     marker.current.visible = meShown;
-    for (const [id, t] of sprites.current) if (!used.has(id)) t.sprite.visible = false;
+    tags.current.count = tagN;
+    tags.current.instanceMatrix.needsUpdate = true;
+    (tagGeo.getAttribute('aTag') as THREE.InstancedBufferAttribute).needsUpdate = true;
     for (const id of anims.current.keys()) if (!used.has(id)) anims.current.delete(id);
 
     const set = (m: THREE.InstancedMesh, count: number) => {
@@ -321,9 +386,10 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       m.instanceMatrix.needsUpdate = true;
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     };
-    set(bodies.current, n * 2); set(limbs.current, n * LIMBS); set(whites.current, n * 6);
-    if (outlines.current) set(outlines.current, n * 2);
-    set(darks.current, n * 3); set(cheeks.current, n * 3); set(arcs.current, n * 3); set(shadows.current, n);
+    const cnt = (m: THREE.InstancedMesh | null) => (m ? slots.get(m)?.n ?? 0 : 0);
+    set(bodies.current, cnt(bodies.current)); set(limbs.current, cnt(limbs.current)); set(whites.current, cnt(whites.current));
+    if (outlines.current) set(outlines.current, cnt(outlines.current));
+    set(darks.current, cnt(darks.current)); set(cheeks.current, cnt(cheeks.current)); set(arcs.current, cnt(arcs.current)); set(shadows.current, shadowN);
   });
 
   const shadow = quality === 'high';
@@ -335,20 +401,20 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
         {cheap ? <meshLambertMaterial /> : <meshStandardMaterial roughness={0.42} metalness={0} />}
       </instancedMesh>
       {!low && (
-        <instancedMesh ref={outlines} args={[sphere, undefined, N * 2]} frustumCulled={false}>
+        <instancedMesh ref={outlines} args={[outlineGeo, undefined, N * 2]} frustumCulled={false}>
           <meshBasicMaterial side={THREE.BackSide} />
         </instancedMesh>
       )}
       <instancedMesh ref={limbs} args={[small, undefined, N * LIMBS]} frustumCulled={false} castShadow={shadow}>
         {cheap ? <meshLambertMaterial /> : <meshStandardMaterial roughness={0.5} metalness={0} />}
       </instancedMesh>
-      <instancedMesh ref={whites} args={[small, undefined, N * 6]} frustumCulled={false}>
+      <instancedMesh ref={whites} args={[tiny, undefined, N * 6]} frustumCulled={false}>
         <meshBasicMaterial color="#ffffff" />
       </instancedMesh>
-      <instancedMesh ref={darks} args={[small, undefined, N * 3]} frustumCulled={false}>
+      <instancedMesh ref={darks} args={[tiny, undefined, N * 3]} frustumCulled={false}>
         <meshBasicMaterial color="#2b2145" />
       </instancedMesh>
-      <instancedMesh ref={cheeks} args={[small, undefined, N * 3]} frustumCulled={false}>
+      <instancedMesh ref={cheeks} args={[tiny, undefined, N * 3]} frustumCulled={false}>
         <meshBasicMaterial transparent opacity={0.62} depthWrite={false} />
       </instancedMesh>
       <instancedMesh ref={arcs} args={[arc, undefined, N * 3]} frustumCulled={false}>
@@ -361,7 +427,7 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
         <coneGeometry args={[0.18, 0.34, 4]} />
         <meshBasicMaterial color="#ffd84d" />
       </mesh>
-      <group ref={tags} />
+      <instancedMesh ref={tags} args={[tagGeo, tagMat, N]} frustumCulled={false} renderOrder={5} />
     </group>
   );
 }

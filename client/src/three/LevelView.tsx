@@ -103,17 +103,18 @@ function bounds(level: LevelDef) {
  * 판정과 무관한 꾸밈: 구름 바다, 떠다니는 풍선과 고리, 체크포인트 아치.
  * 전부 걸을 수 있는 영역 바깥에만 놓아서 "밟을 수 있나?" 하는 혼동이 없게 한다.
  */
-function Decor({ level, low }: { level: LevelDef; low: boolean }) {
+function Decor({ level, low, hi }: { level: LevelDef; low: boolean; hi: boolean }) {
   const clouds = useRef<THREE.InstancedMesh>(null!);
   const balloons = useRef<THREE.InstancedMesh>(null!);
   const rings = useRef<THREE.InstancedMesh>(null!);
   const posts = useRef<THREE.InstancedMesh>(null!);
-  const sphere = useMemo(() => new THREE.SphereGeometry(1, low ? 8 : 14, low ? 6 : 10), [low]);
+  // 구름과 풍선은 멀리 있는 장식이라 거친 구로 충분하다(높음 화질만 매끈하게)
+  const sphere = useMemo(() => new THREE.SphereGeometry(1, low ? 8 : hi ? 14 : 10, low ? 6 : hi ? 10 : 7), [low, hi]);
   const torus = useMemo(() => new THREE.TorusGeometry(1, 0.28, low ? 6 : 10, low ? 14 : 24), [low]);
   const cyl = useMemo(() => new THREE.CylinderGeometry(1, 1, 2, 12), []);
   const postTex = useMemo(() => { const t = stripeTexture('#ffffff', '#ff4f8b', 10); return t; }, []);
   const B = useMemo(() => bounds(level), [level]);
-  const nCloud = low ? 60 : 130, nBalloon = low ? 14 : 30, nRing = low ? 5 : 10;
+  const nCloud = low ? 60 : hi ? 130 : 95, nBalloon = low ? 14 : 30, nRing = low ? 5 : 10;
   const arches = level.checkpoints.slice(1, level.finish ? -1 : undefined);
   const balloonData = useMemo(() => {
     const r = seeded(77);
@@ -669,6 +670,207 @@ export function Confetti({ z }: { z: number }) {
   );
 }
 
+
+const M4 = new THREE.Matrix4();
+const M4b = new THREE.Matrix4();
+const QY = new THREE.Quaternion();
+const QZ = new THREE.Quaternion();
+const V3 = new THREE.Vector3();
+const S3 = new THREE.Vector3();
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+const Z_AXIS = new THREE.Vector3(0, 0, 1);
+
+/**
+ * 움직이는 벽·발판을 종류별로 한 번에 그린다(문이 12개인 미로도 그리기 명령 4번).
+ * 미는 벽에는 심술궂은 눈(흰자, 눈동자, 눈썹)을 단다.
+ */
+function MoversView({ level, mat, shadow }: { level: LevelDef; mat: THREE.Material; shadow: boolean }) {
+  const movers = level.movers;
+  const walls = useMemo(() => movers.map((m, i) => ({ m, i })).filter((x) => x.m.kind === 'wall'), [level]);
+  const body = useRef<THREE.InstancedMesh>(null!);
+  const whites = useRef<THREE.InstancedMesh>(null!);
+  const pupils = useRef<THREE.InstancedMesh>(null!);
+  const brows = useRef<THREE.InstancedMesh>(null!);
+  const box = useMemo(() => new THREE.BoxGeometry(2, 2, 2), []);
+  const ball = useMemo(() => new THREE.SphereGeometry(1, 12, 8), []);
+  const eyes = walls.length * 4; // 벽 하나에 앞뒤 두 면, 면마다 눈 두 개
+
+  useLayoutEffect(() => {
+    if (!movers.length) return; // 움직이는 벽·발판이 없는 맵
+    movers.forEach((m, i) => body.current.setColorAt(i, col.set(m.color ?? '#ffc078')));
+    if (body.current.instanceColor) body.current.instanceColor.needsUpdate = true;
+  }, [level]);
+
+  useFrame(() => {
+    if (!movers.length) return;
+    const t = net.levelTime();
+    movers.forEach((m, i) => {
+      const o = moverOffset(m, t);
+      M4.compose(V3.set(m.p[0] + o[0], m.p[1] + o[1], m.p[2] + o[2]), ID_Q4, S3.set(m.h[0], m.h[1], m.h[2]));
+      body.current.setMatrixAt(i, M4);
+    });
+    body.current.instanceMatrix.needsUpdate = true;
+    let k = 0;
+    for (const { m } of walls) {
+      const o = moverOffset(m, t);
+      for (const face of [-1, 1]) {
+        QY.setFromAxisAngle(Y_AXIS, face > 0 ? 0 : Math.PI);
+        for (const ex of [-1, 1]) {
+          // 눈 하나의 기준점: 벽 앞면(또는 뒷면) 위쪽, 좌우로 0.75m
+          const lx = ex * 0.75 * face;
+          const cx = m.p[0] + o[0] + lx, cy = m.p[1] + o[1] + m.h[1] * 0.25, cz = m.p[2] + o[2] + face * (m.h[2] + 0.02);
+          const f = face; // 면이 바라보는 쪽(+z 또는 −z)
+          M4.compose(V3.set(cx, cy, cz), QY, S3.set(0.5, 0.56, 0.16));
+          whites.current.setMatrixAt(k, M4);
+          M4.compose(V3.set(cx - ex * 0.12 * f, cy - 0.08, cz + 0.13 * f), QY, S3.set(0.22, 0.26, 0.08));
+          pupils.current.setMatrixAt(k, M4);
+          QZ.setFromAxisAngle(Z_AXIS, ex * 0.35);
+          M4b.makeRotationFromQuaternion(QY).multiply(M4.makeRotationFromQuaternion(QZ));
+          M4b.scale(S3.set(0.6, 0.13, 0.1));
+          M4b.setPosition(cx, cy + 0.5, cz + 0.1 * f);
+          brows.current.setMatrixAt(k, M4b);
+          k++;
+        }
+      }
+    }
+    if (eyes) { whites.current.instanceMatrix.needsUpdate = true; pupils.current.instanceMatrix.needsUpdate = true; brows.current.instanceMatrix.needsUpdate = true; }
+  });
+
+  if (!movers.length) return null;
+  return (
+    <group>
+      <instancedMesh ref={body} args={[box, mat, movers.length]} frustumCulled={false} castShadow={shadow} receiveShadow={shadow} />
+      {eyes > 0 && <>
+        <instancedMesh ref={whites} args={[ball, undefined, eyes]} frustumCulled={false}><meshBasicMaterial color="#ffffff" /></instancedMesh>
+        <instancedMesh ref={pupils} args={[ball, undefined, eyes]} frustumCulled={false}><meshBasicMaterial color="#2b2145" /></instancedMesh>
+        <instancedMesh ref={brows} args={[box, undefined, eyes]} frustumCulled={false}><meshBasicMaterial color="#2b2145" /></instancedMesh>
+      </>}
+    </group>
+  );
+}
+const ID_Q4 = new THREE.Quaternion();
+
+/** 줄무늬 봉 재질: 흰 줄과 봉마다 다른 색 줄을 번갈아 칠한다(색은 인스턴스마다 다르다) */
+function makeBarMaterial(tex: THREE.Texture) {
+  const m = new THREE.MeshLambertMaterial({ map: tex });
+  m.onBeforeCompile = (sh) => {
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <map_fragment>', 'float stripeMask = texture2D( map, vMapUv ).r;')
+      .replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb = mix( vec3( 1.0 ), diffuseColor.rgb, stripeMask );');
+  };
+  return m;
+}
+
+/**
+ * 회전봉을 부위별로 한 번에 그린다: 봉, 끝 방울, 가운데 축, 받침, 기둥(봉이 몇 개든 그리기 명령 5번).
+ * 나중에 등장하는 봉은 2.5초 전부터 깜빡이며 예고한다.
+ */
+function SweepersView({ level, shadow }: { level: LevelDef; shadow: boolean }) {
+  const list = level.sweepers;
+  const n = list.length;
+  const bars = useRef<THREE.InstancedMesh>(null!);
+  const ends = useRef<THREE.InstancedMesh>(null!);
+  const hubs = useRef<THREE.InstancedMesh>(null!);
+  const bases = useRef<THREE.InstancedMesh>(null!);
+  const poles = useRef<THREE.InstancedMesh>(null!);
+  const cyl = useMemo(() => new THREE.CylinderGeometry(1, 1, 2, 14, 1, true).rotateZ(Math.PI / 2), []);
+  const ball = useMemo(() => new THREE.SphereGeometry(1, 12, 9), []);
+  const base = useMemo(() => new THREE.CylinderGeometry(0.42, 0.7, 1, 16), []);
+  const pole = useMemo(() => new THREE.CylinderGeometry(1, 1, 1, 10), []);
+  const tex = useMemo(() => { const t = stripeTexture('#000000', '#ffffff', 2); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1, 6); return t; }, []);
+  const barMat = useMemo(() => makeBarMaterial(tex), [tex]);
+  const hasPole = list.filter((s) => s.c[1] > s.r + 1);
+
+  useLayoutEffect(() => {
+    if (!n) return;
+    list.forEach((s, i) => {
+      bars.current.setColorAt(i, col.set(s.color ?? '#ff4f8b'));
+      M4.compose(V3.set(s.c[0], s.c[1] - 0.25 - s.r, s.c[2]), ID_Q4, S3.set(1, 0.5 + s.r, 1));
+      bases.current.setMatrixAt(i, M4);
+    });
+    hasPole.forEach((s, i) => { M4.compose(V3.set(s.c[0], s.c[1] - 1, s.c[2]), ID_Q4, S3.set(0.2, 2, 0.2)); poles.current.setMatrixAt(i, M4); });
+    if (bars.current.instanceColor) bars.current.instanceColor.needsUpdate = true;
+    bases.current.instanceMatrix.needsUpdate = true;
+    if (hasPole.length) poles.current.instanceMatrix.needsUpdate = true;
+  }, [level]);
+
+  useFrame(() => {
+    if (!n) return;
+    const t = net.levelTime();
+    list.forEach((s, i) => {
+      const wait = (s.startAt ?? 0) - t;
+      const show = wait <= 0 || (wait < 2.5 && (t * 5) % 1 < 0.6);
+      const a = -sweeperAngle(s, t);
+      QY.setFromAxisAngle(Y_AXIS, a);
+      const k = show ? 1 : 0;
+      M4.compose(V3.set(s.c[0], s.c[1], s.c[2]), QY, S3.set(s.len * k, s.r * k, s.r * k));
+      bars.current.setMatrixAt(i, M4);
+      const ca = Math.cos(a), sa = Math.sin(a);
+      for (const e of [-1, 1]) {
+        const d = e * (s.len - 0.1);
+        M4.compose(V3.set(s.c[0] + ca * d, s.c[1], s.c[2] - sa * d), ID_Q4, S3.setScalar(s.r * 1.55 * k));
+        ends.current.setMatrixAt(i * 2 + (e > 0 ? 1 : 0), M4);
+      }
+      M4.compose(V3.set(s.c[0], s.c[1], s.c[2]), ID_Q4, S3.setScalar(0.62 * k));
+      hubs.current.setMatrixAt(i, M4);
+    });
+    bars.current.instanceMatrix.needsUpdate = true; ends.current.instanceMatrix.needsUpdate = true; hubs.current.instanceMatrix.needsUpdate = true;
+  });
+
+  if (!n) return null;
+  return (
+    <group>
+      <instancedMesh ref={bars} args={[cyl, barMat, n]} frustumCulled={false} castShadow={shadow} />
+      <instancedMesh ref={ends} args={[ball, undefined, n * 2]} frustumCulled={false}><meshLambertMaterial color="#ffd43b" /></instancedMesh>
+      <instancedMesh ref={hubs} args={[ball, undefined, n]} frustumCulled={false}><meshLambertMaterial color="#ffffff" /></instancedMesh>
+      <instancedMesh ref={bases} args={[base, undefined, n]} frustumCulled={false}><meshLambertMaterial color="#7048e8" /></instancedMesh>
+      {hasPole.length > 0 && <instancedMesh ref={poles} args={[pole, undefined, hasPole.length]} frustumCulled={false}><meshLambertMaterial color="#ffffff" /></instancedMesh>}
+    </group>
+  );
+}
+
+/** 점프 발판: 노란 받침, 분홍 가운데, 위로 퍼지는 고리를 종류별로 한 번에 그린다 */
+function PadsView({ level }: { level: LevelDef }) {
+  const pads = level.pads;
+  const n = pads.length;
+  const plates = useRef<THREE.InstancedMesh>(null!);
+  const cores = useRef<THREE.InstancedMesh>(null!);
+  const rings = useRef<THREE.InstancedMesh>(null!);
+  const plate = useMemo(() => new THREE.CylinderGeometry(1, 1.08, 1, 24), []);
+  const core = useMemo(() => new THREE.CylinderGeometry(1, 1, 1, 20), []);
+  const ring = useMemo(() => new THREE.TorusGeometry(1, 0.09, 6, 24).rotateX(Math.PI / 2), []);
+  const ringMat = useMemo(() => new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true }), []);
+
+  useLayoutEffect(() => {
+    if (!n) return;
+    pads.forEach((p, i) => {
+      M4.compose(V3.set(p.p[0], p.p[1], p.p[2]), ID_Q4, S3.set(p.h[0], 0.14, p.h[2])); plates.current.setMatrixAt(i, M4);
+      M4.compose(V3.set(p.p[0], p.p[1] + 0.09, p.p[2]), ID_Q4, S3.set(p.h[0] * 0.55, 0.05, p.h[2] * 0.55)); cores.current.setMatrixAt(i, M4);
+    });
+    plates.current.instanceMatrix.needsUpdate = true; cores.current.instanceMatrix.needsUpdate = true;
+  }, [level]);
+
+  useFrame((state) => {
+    if (!n) return;
+    const k = (state.clock.elapsedTime * 3) % 1;
+    pads.forEach((p, i) => {
+      const r = Math.min(p.h[0], p.h[2]) * (0.5 + k * 0.6);
+      M4.compose(V3.set(p.p[0], p.p[1] + 0.12 + k * 0.9, p.p[2]), ID_Q4, S3.set(r, r, r)); rings.current.setMatrixAt(i, M4);
+    });
+    rings.current.instanceMatrix.needsUpdate = true;
+    ringMat.opacity = 1 - k;
+  });
+
+  if (!n) return null;
+  return (
+    <group>
+      <instancedMesh ref={plates} args={[plate, undefined, n]} frustumCulled={false}><meshLambertMaterial color="#ffd43b" emissive="#ff8a00" emissiveIntensity={0.5} /></instancedMesh>
+      <instancedMesh ref={cores} args={[core, undefined, n]} frustumCulled={false}><meshBasicMaterial color="#ff4f8b" /></instancedMesh>
+      <instancedMesh ref={rings} args={[ring, ringMat, n]} frustumCulled={false} />
+    </group>
+  );
+}
+
 /** 맵 정의(LevelDef)를 그대로 메시로 옮긴다. 고정 바닥은 InstancedMesh 하나로 그린다. */
 export function LevelView({ level }: { level: LevelDef }) {
   const quality = useStore((s) => s.quality);
@@ -677,20 +879,11 @@ export function LevelView({ level }: { level: LevelDef }) {
   const cheap = quality !== 'high';
   const statics = useRef<THREE.InstancedMesh>(null!);
   const strips = useRef<THREE.InstancedMesh>(null!);
-  const movers = useRef<THREE.Group>(null!);
-  const sweepers = useRef<THREE.Group>(null!);
-  const pads = useRef<THREE.Group>(null!);
   const box = useMemo(() => new THREE.BoxGeometry(2, 2, 2), []);
   const blockMat = useMemo(() => makeBlockMaterial(cheap), [cheap]);
   const banner = useMemo(() => (level.finish ? bannerTexture() : null), [level]);
-  const barTex = useMemo(() => new Map<string, THREE.Texture>(), []);
-  const barTexture = (c: string) => {
-    if (!barTex.has(c)) barTex.set(c, stripeTexture('#ffffff', c, 12, true));
-    return barTex.get(c)!;
-  };
   const cps = level.checkpoints.slice(1, level.finish ? -1 : undefined);
-  const moverMats = useMemo(() => level.movers.map((m) => { const mt = makeBlockMaterial(cheap); mt.color.set(m.color ?? '#ffc078'); return mt; }), [level, cheap]);
-  useEffect(() => () => { blockMat.dispose(); moverMats.forEach((m) => m.dispose()); }, [blockMat, moverMats]);
+  useEffect(() => () => { blockMat.dispose(); }, [blockMat]);
 
   useLayoutEffect(() => {
     level.statics.forEach((b, i) => {
@@ -714,30 +907,6 @@ export function LevelView({ level }: { level: LevelDef }) {
     strips.current.instanceMatrix.needsUpdate = true;
   }, [level, low]);
 
-  useFrame((state) => {
-    const t = net.levelTime();
-    level.movers.forEach((m, i) => {
-      const o = moverOffset(m, t);
-      movers.current.children[i]?.position.set(m.p[0] + o[0], m.p[1] + o[1], m.p[2] + o[2]);
-    });
-    level.sweepers.forEach((s, i) => {
-      const g = sweepers.current.children[i];
-      if (!g) return;
-      g.rotation.y = -sweeperAngle(s, t);
-      // 나중에 등장하는 봉은 2.5초 전부터 깜빡이며 예고한다
-      const wait = (s.startAt ?? 0) - t;
-      g.visible = wait <= 0 || (wait < 2.5 && (t * 5) % 1 < 0.6);
-    });
-    const beat = state.clock.elapsedTime * 3;
-    for (const p of pads.current.children) {
-      const ring = p.children[1];
-      const k = (beat % 1);
-      ring.scale.setScalar(0.5 + k * 0.6);
-      ring.position.y = 0.12 + k * 0.9;
-      ((ring as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 1 - k;
-    }
-  });
-
   return (
     <group>
       <instancedMesh ref={statics} args={[box, blockMat, Math.max(1, level.statics.length)]} count={level.statics.length} receiveShadow={shadow} />
@@ -755,80 +924,16 @@ export function LevelView({ level }: { level: LevelDef }) {
       <instancedMesh ref={strips} args={[box, undefined, Math.max(1, cps.length)]} count={cps.length}>
         <meshBasicMaterial color="#ffffff" transparent opacity={0.85} />
       </instancedMesh>
-      <group ref={movers}>
-        {level.movers.map((m, i) => (
-          <group key={i} position={m.p}>
-            <mesh geometry={box} material={moverMats[i]} scale={m.h} castShadow={shadow} receiveShadow={shadow} />
-            {m.kind === 'wall' && [-1, 1].map((face) => (
-              // 미는 벽에는 심술궂은 눈을 달아 "피해야 하는 것"임을 한눈에 알게 한다
-              <group key={face} position={[0, m.h[1] * 0.25, face * (m.h[2] + 0.02)]} rotation={[0, face > 0 ? 0 : Math.PI, 0]}>
-                {[-1, 1].map((ex) => (
-                  <group key={ex} position={[ex * 0.75, 0, 0]}>
-                    <mesh scale={[0.5, 0.56, 0.16]}><sphereGeometry args={[1, 14, 10]} /><meshBasicMaterial color="#ffffff" /></mesh>
-                    <mesh position={[-ex * 0.12, -0.08, 0.13]} scale={[0.22, 0.26, 0.08]}><sphereGeometry args={[1, 10, 8]} /><meshBasicMaterial color="#2b2145" /></mesh>
-                    <mesh position={[0, 0.5, 0.1]} rotation={[0, 0, ex * 0.35]} scale={[0.6, 0.13, 0.1]} geometry={box}><meshBasicMaterial color="#2b2145" /></mesh>
-                  </group>
-                ))}
-              </group>
-            ))}
-          </group>
-        ))}
-      </group>
-      <group ref={sweepers}>
-        {level.sweepers.map((s, i) => (
-          <group key={i} position={s.c}>
-            <mesh rotation={[0, 0, Math.PI / 2]} castShadow={shadow}>
-              <capsuleGeometry args={[s.r, s.len * 2 - s.r * 2, 6, 14]} />
-              <meshLambertMaterial map={barTexture(s.color ?? '#ff4f8b')} />
-            </mesh>
-            {[-1, 1].map((e) => (
-              <mesh key={e} position={[e * (s.len - 0.1), 0, 0]}>
-                <sphereGeometry args={[s.r * 1.55, 12, 10]} />
-                <meshLambertMaterial color="#ffd43b" />
-              </mesh>
-            ))}
-            <mesh>
-              <sphereGeometry args={[0.62, 16, 12]} />
-              <meshLambertMaterial color="#ffffff" />
-            </mesh>
-            <mesh position={[0, -0.25 - s.r, 0]}>
-              <cylinderGeometry args={[0.42, 0.7, 0.5 + s.r, 16]} />
-              <meshLambertMaterial color="#7048e8" />
-            </mesh>
-            {s.c[1] > s.r + 1 && (
-              <mesh position={[0, -1, 0]}>
-                <cylinderGeometry args={[0.2, 0.2, 2, 10]} />
-                <meshLambertMaterial color="#ffffff" />
-              </mesh>
-            )}
-          </group>
-        ))}
-      </group>
-      <group ref={pads}>
-        {level.pads.map((p, i) => (
-          <group key={i} position={[p.p[0], p.p[1], p.p[2]]}>
-            <mesh scale={[p.h[0], 0.14, p.h[2]]}>
-              <cylinderGeometry args={[1, 1.08, 1, 24]} />
-              <meshLambertMaterial color="#ffd43b" emissive="#ff8a00" emissiveIntensity={0.5} />
-            </mesh>
-            <mesh rotation={[Math.PI / 2, 0, 0]}>
-              <torusGeometry args={[Math.min(p.h[0], p.h[2]), 0.09, 6, 24]} />
-              <meshBasicMaterial color="#ffffff" transparent />
-            </mesh>
-            <mesh position={[0, 0.09, 0]} scale={[p.h[0] * 0.55, 0.05, p.h[2] * 0.55]}>
-              <cylinderGeometry args={[1, 1, 1, 20]} />
-              <meshBasicMaterial color="#ff4f8b" />
-            </mesh>
-          </group>
-        ))}
-      </group>
+      <MoversView level={level} mat={blockMat} shadow={shadow} />
+      <SweepersView level={level} shadow={shadow} />
+      <PadsView level={level} />
       {level.finish && banner && (
         <mesh position={[0, level.checkpoints[level.checkpoints.length - 1].spawn[1] + 4.7, level.finish.p[2] - level.finish.h[2]]} rotation={[0, Math.PI, 0]}>
           <planeGeometry args={[level.finish.h[0] * 2, 1.9]} />
           <meshBasicMaterial map={banner} side={THREE.DoubleSide} />
         </mesh>
       )}
-      <Decor level={level} low={low} />
+      <Decor level={level} low={low} hi={quality === 'high'} />
     </group>
   );
 }

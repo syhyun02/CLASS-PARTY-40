@@ -84,6 +84,30 @@ export type InputMsg = [number, number, number, number];
 /** 자기 캐릭터의 정확한 상태(예측 보정용): t=서버 틱, q=마지막으로 처리한 입력 번호 */
 export interface SelfMsg { t: number; q: number; s: number[] }
 
+/**
+ * 내 정확한 상태(바이너리): 틱 u32, 처리한 입력 번호 u32, 상태값 Float32 × n.
+ * 위치 스냅샷과 함께 한 메시지('u')로 보내서 학생 한 명이 받는 패킷 수를 줄인다(무선망 혼잡 완화).
+ */
+export function encodeSelf(m: SelfMsg): Uint8Array {
+  const buf = new ArrayBuffer(8 + m.s.length * 4);
+  const dv = new DataView(buf);
+  dv.setUint32(0, m.t); dv.setUint32(4, m.q >>> 0);
+  for (let i = 0; i < m.s.length; i++) dv.setFloat32(8 + i * 4, m.s[i]);
+  return new Uint8Array(buf);
+}
+export function decodeSelf(buf: ArrayBuffer): SelfMsg {
+  const dv = new DataView(buf);
+  const n = (buf.byteLength - 8) / 4, s: number[] = new Array(n);
+  for (let i = 0; i < n; i++) s[i] = dv.getFloat32(8 + i * 4);
+  return { t: dv.getUint32(0), q: dv.getUint32(4), s };
+}
+/** base64 → ArrayBuffer (브라우저와 Node 모두에서 동작) */
+export function fromB64(b64: string): ArrayBuffer {
+  const bin = atob(b64), out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out.buffer;
+}
+
 // ---- 스냅샷(바이너리): 틱(u32) 인원(u8) + 인원 × [id u8, x y z i16, yaw u8, flags u8] ----
 export const FLAG_GROUNDED = 1;
 export const FLAG_STUN = 2;

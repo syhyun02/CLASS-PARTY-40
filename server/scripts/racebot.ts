@@ -4,7 +4,7 @@
  *   npx tsx scripts/racebot.ts --url http://localhost:3001
  */
 import { io, type Socket } from 'socket.io-client';
-import { DT, TICK_RATE, buildLevel, moverOffset, sweeperAngle, unpackState, newPlayerState, type CreateRes, type JoinRes, type LevelDef, type PlayerState, type RoomState, type SelfMsg } from '@shared';
+import { DT, TICK_RATE, buildLevel, moverOffset, sweeperAngle, unpackState, newPlayerState, decodeSelf, fromB64, type CreateRes, type JoinRes, type LevelDef, type PlayerState, type RoomState, type SelfMsg } from '@shared';
 
 const i0 = process.argv.indexOf('--url');
 const URL = i0 >= 0 ? process.argv[i0 + 1] : 'http://localhost:3001';
@@ -23,7 +23,7 @@ for (let i = 0; i < 4; i++) {
   const res = await new Promise<JoinRes>((r) => socket.emit('join', { code: created.code, name: i === 0 ? '똑똑봇' : `직진봇${i}`, color: '#4d96ff' }, r));
   if (!res.ok) throw new Error(res.error);
   const b: Bot = { socket, id: res.id, s: null, tick: 0, seq: 0, smart: i === 0 };
-  socket.on('me', (m: SelfMsg) => { b.s = unpackState(m.s, b.s ?? newPlayerState(buildLevel('lobby', 0), 0)); b.tick = m.t; });
+  socket.on('u', (_snap: string, self?: string) => { if (!self) return; const m = decodeSelf(fromB64(self)); b.s = unpackState(m.s, b.s ?? newPlayerState(buildLevel('lobby', 0), 0)); b.tick = m.t; });
   bots.push(b);
 }
 
@@ -96,7 +96,7 @@ while (Date.now() - t0 < 150_000) {
   await sleep(500);
   const s = bots[0].s;
   if (room!.phase === 'playing' && s && s.cp !== lastCp) { lastCp = s.cp; console.log(`똑똑봇 체크포인트 ${s.cp} (z=${s.z.toFixed(1)}, 낙하 ${s.falls}회, ${((Date.now() - t0) / 1000 - 10).toFixed(0)}초)`); }
-  if (s && s.cp === 4 && process.env.DBG) console.log(s.x.toFixed(1), s.y.toFixed(1), s.z.toFixed(1), 'g', s.grounded, 'falls', s.falls, 'd', decide(bots[0]).join(','));
+  if (s && s.cp >= 5 && process.env.DBG) console.log(room!.phase, 'place', room!.players.find((p) => p.id === bots[0].id)?.place, s.cp, s.x.toFixed(1), s.y.toFixed(1), s.z.toFixed(1), 'g', s.grounded, 'falls', s.falls, 'd', decide(bots[0]).join(','));
   if (room!.phase === 'result' || room!.phase === 'final') break;
 }
 console.log('단계:', room!.phase);

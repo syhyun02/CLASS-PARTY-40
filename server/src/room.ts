@@ -4,7 +4,7 @@ import {
   COUNTDOWN_SEC, DT, FLAG_ACT, FLAG_DONE, FLAG_GRAB, FLAG_HELD, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_SHOVED, FLAG_STUN, MAX_PLAYERS, NO_INPUT, PLAYER_COLORS, PLAYER_RADIUS,
   ALL_UNITS, BODY_DIST, DEFAULT_BANK, PODIUM, PODIUM_Z, SNAPSHOT_EVERY, SimWorld, TICK_RATE, bodyPush, buildLevel, cleanBank, pickQuestions, encodeSnapshot, getGame, newPlayerState, packState,
   type HostCmd, type InputMsg, type JoinReq, type JoinRes, type LevelDef, type Phase, type PlayerInput,
-  type BankQ, type PickedQ, type PlayerState, type QLevel, type RoomConfig, type RoomState, type RoundRow, type SelfMsg, type SnapPlayer,
+  encodeSelf, type BankQ, type PickedQ, type PlayerState, type QLevel, type RoomConfig, type RoomState, type RoundRow, type SnapPlayer,
 } from '@shared';
 import { drawGame, getMinigame, playableIds } from './minigames';
 import type { GameCtx, GamePlayer, MinigameRuntime } from './minigames/types';
@@ -79,6 +79,8 @@ export class Room {
   private drawn: string[] = [];
   private dirty = true;
   private gameState: unknown = null;
+  private urgent = true;
+  private lastFlush = -999;
   /** 교사가 편집한 문제은행(없으면 기본 문제) */
   private bank: BankQ[] = DEFAULT_BANK;
   /** 이번 맵에 출제한 문제(정답 포함). 클라이언트에는 정답을 빼고 보낸다. */
@@ -152,7 +154,7 @@ export class Room {
     socket.join(this.channel);
     this.dirty = true;
     this.lastActive = Date.now();
-    socket.emit('room', this.snapshotState());
+    socket.emit('room', this.snapshotState(false));
     if (this.gameState) socket.emit('g', { key: this.levelKey, state: this.gameState });
     return { ok: true, id: p.id, token: p.token, name: p.name, tickRate: TICK_RATE };
   }
@@ -192,6 +194,7 @@ export class Room {
 
   hostCmd(cmd: HostCmd) {
     this.lastActive = Date.now();
+    this.urgent = true;
     switch (cmd.type) {
       case 'sound':
         this.config.studentSound = !!cmd.on;
@@ -250,6 +253,7 @@ export class Room {
   private inGame() { return this.phase === 'countdown' || this.phase === 'playing' || this.phase === 'result'; }
 
   private setPhase(phase: Phase, duration: number) {
+    this.urgent = true;
     this.phase = phase;
     this.phaseEndTick = duration > 0 ? this.tick + duration : 0;
     this.dirty = true;
@@ -263,6 +267,7 @@ export class Room {
     this.levelId = levelId;
     this.levelSeed = seed;
     this.levelKey = `${levelId}:${++this.levelSerial}`;
+    this.urgent = true;
     this.levelTick = this.tick;
     this.gameState = null;
     this.gameDirty = false;
@@ -541,27 +546,39 @@ export class Room {
       if (p.held) flags |= FLAG_HELD;
       snap.push({ id: p.id, x: s.x, y: s.y, z: s.z, yaw: s.yaw, flags });
     }
-    const buf = Buffer.from(encodeSnapshot(this.tick, snap));
-    this.io.to(this.channel).emit('s', buf);
-    let recipients = this.hosts.size;
+    // 학생마다 [모두의 위치, 내 정확한 상태]를 문자열 하나로 묶어 보낸다.
+    // 바이너리를 따로 보내면 socket.io가 조각 두 개로 나눠 보내므로, base64 문자열로 바꿔 한 조각에 담는다.
+    const snapB64 = Buffer.from(encodeSnapshot(this.tick, snap)).toString('base64');
+    let bytes = 0;
     for (const p of this.players.values()) {
       if (!p.socket) continue;
-      recipients++;
-      const me: SelfMsg = { t: this.tick, q: p.lastSeq, s: packState(p.state) };
-      p.socket.emit('me', me);
-      metrics.bytesOut += 150;
+      const selfB64 = Buffer.from(encodeSelf({ t: this.tick, q: p.lastSeq, s: packState(p.state) })).toString('base64');
+      p.socket.emit('u', snapB64, selfB64);
+      bytes += snapB64.length + selfB64.length + 12;
     }
-    metrics.bytesOut += (buf.length + 12) * recipients;
+    if (this.hosts.size) this.io.to(this.hostChannel).emit('u', snapB64);
+    metrics.bytesOut += bytes + (snapB64.length + 10) * this.hosts.size;
     metrics.snapshots++;
   }
 
+  /**
+   * 방 상태 보내기. 학생 40명에게 4~5KB씩 가는 메시지라, 급하지 않은 변화(순위·탈락 표시)는 0.25초씩 모아서 보낸다.
+   * 단계 전환·맵 변경·교사 명령은 바로 보낸다. 경기 기록(history)은 교사 화면에만 보낸다.
+   */
   private flush() {
     if (!this.dirty) return;
+    if (!this.urgent && this.tick - this.lastFlush < Math.round(TICK_RATE / 4)) return;
     this.dirty = false;
-    this.io.to(this.channel).emit('room', this.snapshotState());
+    this.urgent = false;
+    this.lastFlush = this.tick;
+    this.io.to(this.channel).except(this.hostChannel).emit('room', this.snapshotState(false));
+    if (this.hosts.size) this.io.to(this.hostChannel).emit('room', this.snapshotState(true));
   }
 
-  snapshotState(): RoomState {
+  get hostChannel() { return `h:${this.code}`; }
+
+  /** forHost=false면 학생용: 경기 기록을 빼고, 라운드 결과는 결과 화면일 때만 넣는다 */
+  snapshotState(forHost = true): RoomState {
     return {
       code: this.code, config: this.config, phase: this.phase, paused: this.paused,
       round: this.round, gameId: this.gameId,
@@ -572,8 +589,8 @@ export class Room {
       players: [...this.players.values()].map((p) => ({
         id: p.id, name: p.name, color: p.color, score: p.score, connected: p.connected, active: p.active, place: p.place, out: p.out,
       })),
-      lastResult: this.lastResult,
-      history: this.history,
+      lastResult: forHost || this.phase === 'result' ? this.lastResult : null,
+      history: forHost ? this.history : [],
     };
   }
 

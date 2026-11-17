@@ -1,7 +1,7 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import { io, type Socket } from 'socket.io-client';
 import {
-  BODY_DIST, DT, FLAG_GRAB, FLAG_HELD, FLAG_HIDDEN, NO_INPUT, SNAPSHOT_EVERY, SimWorld, TICK_RATE, bodyPush, buildLevel, decodeSnapshot, newPlayerState, unpackState,
+  BODY_DIST, DT, FLAG_GRAB, FLAG_HELD, FLAG_HIDDEN, NO_INPUT, SNAPSHOT_EVERY, SimWorld, TICK_RATE, bodyPush, buildLevel, decodeSelf, decodeSnapshot, fromB64, newPlayerState, unpackState,
   type CollectState, type CreateRes, type HostCmd, type JoinRes, type LevelDef, type PlayerInput, type PlayerState, type RoomConfig,
   type GameStateMsg, type PersonalMsg, type RoomState, type SelfMsg, type SnapPlayer,
 } from '@shared';
@@ -82,8 +82,8 @@ class GameNet {
     s.on('connect', () => { useStore.setState({ online: true }); this.rejoin(); });
     s.on('disconnect', () => useStore.setState({ online: false }));
     s.on('room', (r: RoomState) => this.onRoom(r));
-    s.on('s', (buf: ArrayBuffer) => this.onSnapshot(buf));
-    s.on('me', (m: SelfMsg) => this.onSelf(m));
+    // 위치 스냅샷과 내 상태가 한 메시지로 온다(base64 문자열 두 개)
+    s.on('u', (snap: string, self?: string) => { this.onSnapshot(fromB64(snap)); if (self) this.onSelf(decodeSelf(fromB64(self))); });
     s.on('g', (m: GameStateMsg) => { if (m.key === this.levelKey) { this.applyGameState(m.state); useStore.setState({ game: m.state }); } });
     s.on('gp', (m: PersonalMsg) => {
       if (m.key !== this.levelKey) return;

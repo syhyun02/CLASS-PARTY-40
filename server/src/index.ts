@@ -99,6 +99,7 @@ io.on('connection', (socket) => {
     socket.data.host = true;
     room.hosts.add(socket.id);
     socket.join(room.channel);
+    socket.join(room.hostChannel); // 교사 화면 전용 메시지(경기 기록 등)
     socket.emit('room', room.snapshotState());
   }
 
@@ -109,7 +110,7 @@ io.on('connection', (socket) => {
       // 교사가 방을 닫았다: 학생과 다른 교사 화면을 모두 내보내고 방을 지운다
       rooms.delete(room.code);
       room.close();
-      for (const id of room.hosts) { const hs = io.sockets.sockets.get(id); if (hs) { hs.leave(room.channel); hs.data.host = false; hs.data.code = undefined; } }
+      for (const id of room.hosts) { const hs = io.sockets.sockets.get(id); if (hs) { hs.leave(room.channel); hs.leave(room.hostChannel); hs.data.host = false; hs.data.code = undefined; } }
       return;
     }
     room.hostCmd(cmd);

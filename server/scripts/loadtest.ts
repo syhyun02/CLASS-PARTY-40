@@ -4,7 +4,7 @@
  * 서버 틱 시간, CPU, 메모리, 통신량, 왕복 지연, 스냅샷 수신 주기를 출력한다.
  */
 import { io, type Socket } from 'socket.io-client';
-import { CHEM_DOOR_X, DT, QUIZ_PAD_POS, ballPos, buildLevel, chemRowZ, sweeperAngle, sweeperSpeed, TICK_RATE, decodeSnapshot, type CreateRes, type JoinRes, type RoomState, type SelfMsg } from '@shared';
+import { CHEM_DOOR_X, DT, QUIZ_PAD_POS, ballPos, buildLevel, chemRowZ, sweeperAngle, sweeperSpeed, TICK_RATE, decodeSnapshot, decodeSelf, fromB64, type CreateRes, type JoinRes, type RoomState, type SelfMsg } from '@shared';
 
 const arg = (name: string, def: string) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -46,14 +46,14 @@ for (let i = 0; i < BOTS; i++) {
   const res = await new Promise<JoinRes>((r) => socket.emit('join', { code: created.code, name: `봇${i + 1}`, color: '#ff6b8b' }, r));
   if (!res.ok) throw new Error(res.error);
   const bot: Bot = { passed: 0, wrong: [], firstTries: 0, x: 0, y: 0, grounded: 1, tick: 0, socket, id: res.id, seq: 0, snaps: 0, gaps: [], lastSnap: 0, rtts: [], z: 0, cp: 0, bytes: 0, ackLag: [] };
-  socket.on('s', (buf: ArrayBuffer | Buffer) => {
+  socket.on('u', (snapB64: string, selfB64?: string) => {
     const now = performance.now();
     if (bot.lastSnap) bot.gaps.push(now - bot.lastSnap);
     bot.lastSnap = now; bot.snaps++;
-    bot.bytes += (buf as any).byteLength ?? (buf as any).length;
-    if (i === 0) decodeSnapshot(buf instanceof ArrayBuffer ? buf : (buf as Buffer).buffer.slice((buf as Buffer).byteOffset, (buf as Buffer).byteOffset + (buf as Buffer).length) as ArrayBuffer);
+    bot.bytes += snapB64.length + (selfB64?.length ?? 0) + 12;
+    if (i === 0) decodeSnapshot(fromB64(snapB64));
+    if (selfB64) { const m = decodeSelf(fromB64(selfB64)); bot.x = m.s[0]; bot.y = m.s[1]; bot.grounded = m.s[7]; bot.tick = m.t; bot.z = m.s[2]; bot.cp = m.s[13]; bot.ackLag.push(bot.seq - m.q); }
   });
-  socket.on('me', (m: SelfMsg) => { bot.x = m.s[0]; bot.y = m.s[1]; bot.grounded = m.s[7]; bot.tick = m.t; bot.z = m.s[2]; bot.cp = m.s[13]; bot.ackLag.push(bot.seq - m.q); bot.bytes += JSON.stringify(m).length; });
   socket.on('gp', (m: { pass?: { q: number; first: boolean; explain: string }; wrong?: [number, number] }) => { if (m.pass) { bot.passed = m.pass.q + 1; if (m.pass.first) bot.firstTries++; if (m.pass.explain) explained++; } if (m.wrong) { bot.wrong.push(m.wrong); wrongTold++; } });
   bots.push(bot);
 }
