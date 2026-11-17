@@ -3,7 +3,7 @@ import {
   AIR_ACCEL, COYOTE_TICKS, DT, GRAVITY, GROUND_ACCEL, JUMP_BUFFER_TICKS, JUMP_VELOCITY,
   MOVE_SPEED, PLAYER_CENTER_Y, PLAYER_HALF_HEIGHT, PLAYER_RADIUS, STUN_TICKS, TICK_RATE,
 } from './constants';
-import { inBox, moverOffset, spawnPoint, sweeperAngle, sweeperSpeed, tileOn, type LevelDef } from './level';
+import { ballPos, inBox, moverOffset, spawnPoint, sweeperAngle, sweeperSpeed, tileOn, type LevelDef } from './level';
 
 type Rapier = typeof RAPIER_NS;
 
@@ -250,6 +250,31 @@ export class SimWorld {
           s.stun = STUN_TICKS; s.grounded = 0; s.coyote = 0; s.mover = -1;
           break;
         }
+      }
+    }
+
+    // 굴러오는 공: 몸에 닿으면 공이 굴러가는 방향으로 날려 보낸다. 공 위로 뛰어넘으면 닿지 않는다.
+    const balls = L.balls;
+    if (balls && s.stun < STUN_TICKS - REHIT_TICKS) {
+      for (let i = 0; i < balls.length; i++) {
+        const b = balls[i];
+        if (b.at > this.time) break; // 출발 시각 순으로 정렬되어 있다
+        if (this.time > b.end) continue;
+        // 발이 공 꼭대기보다 높거나, 머리가 공 아래에 있으면 닿지 않는다(공은 바닥 y=0 위를 구른다)
+        if (s.y > b.r * 2 - 0.12 || s.y + PLAYER_CENTER_Y * 2 < 0) continue;
+        const [bx, bz] = ballPos(b, this.time);
+        const ox = s.x - bx, oz = s.z - bz;
+        const reach = b.r + PLAYER_RADIUS;
+        if (ox * ox + oz * oz > reach * reach) continue;
+        // 공의 진행 방향으로 크게, 공 중심에서 벗어나는 방향으로 조금 더 밀린다
+        const d = Math.hypot(ox, oz) || 1;
+        const side = (ox * b.dz - oz * b.dx) / d; // 공 진행 방향의 옆쪽 성분
+        const power = 3.5 + b.speed * 0.3 + b.r * 2; // 작은 공은 2m쯤, 큰 공은 3~4m쯤 날아간다
+        s.vx = b.dx * power + -b.dz * side * 1.5;
+        s.vz = b.dz * power + b.dx * side * 1.5;
+        s.vy = 4.2 + b.r * 1.5;
+        s.stun = Math.round(STUN_TICKS * 0.75); s.grounded = 0; s.coyote = 0; s.mover = -1; s.shove = 0;
+        break;
       }
     }
 

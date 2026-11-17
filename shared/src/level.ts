@@ -77,6 +77,26 @@ export interface QuizQ {
 /** 보기 팻말을 띄울 자리: 몇 번 문제의 몇 번 보기인지 */
 export interface QuizSign { p: Vec3; q: number; o: number; color: string }
 
+/**
+ * 굴러오는 공(피구공 피하기). 정해진 시각에 경기장 밖에서 출발해 곧게 굴러간다.
+ * 위치가 시각만으로 정해지므로 서버와 클라이언트 예측이 같은 순간에 같은 곳에서 부딪힌다.
+ */
+export interface Ball {
+  x: number; z: number; // 출발 위치(바닥 위)
+  dx: number; dz: number; // 굴러가는 방향(단위 벡터)
+  speed: number; // m/s
+  r: number; // 반지름. 작은 공은 점프로 넘을 수 있다
+  at: number; // 출발 시각(초)
+  enter: number; // 경기장 가장자리에 닿는 시각(예고 표시용)
+  end: number; // 경기장을 벗어나 사라지는 시각
+  color: string;
+}
+
+export function ballPos(b: Ball, t: number): [number, number] {
+  const d = (t - b.at) * b.speed;
+  return [b.x + b.dx * d, b.z + b.dz * d];
+}
+
 /** 정해진 시각에 나타나는 보물. 먼저 닿은 사람이 가져간다(서버 판정). */
 export interface Item {
   p: Vec3;
@@ -103,6 +123,8 @@ export interface LevelDef {
   tiles?: Tile[];
   /** 터지는 시각 순서로 정렬되어 있어야 한다 */
   bombs?: Bomb[];
+  /** 출발 시각 순서로 정렬되어 있어야 한다 */
+  balls?: Ball[];
   items?: Item[];
   quiz?: QuizQ[];
   signs?: QuizSign[];

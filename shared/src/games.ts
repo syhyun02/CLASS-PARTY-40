@@ -1,7 +1,7 @@
 import type { LevelDef } from './level';
 import { buildLobby } from './levels/lobby';
 import { buildRace } from './levels/race';
-import { buildBomb, buildLast, buildSpinner, buildSumo, buildTail, buildTiles, buildTreasure } from './levels/arenas';
+import { buildBomb, buildDodge, buildLast, buildSpinner, buildSumo, buildTail, buildTiles, buildTreasure } from './levels/arenas';
 import type { PublicQ } from './chem/bank';
 import { buildChemMaze, buildMaze } from './levels/maze';
 import { buildQuiz } from './levels/quiz';
@@ -64,6 +64,10 @@ export const GAMES: GameMeta[] = [
   {
     id: 'bomb', name: '펑펑 광장', emoji: '💣', genre: 'survival', modes: ['play', 'chem'],
     howTo: '빨간 원 밖으로 피하거나 벽 뒤에 숨어요!', timeLimit: 76, implemented: true, buildLevel: buildBomb,
+  },
+  {
+    id: 'dodge', name: '피구공 피하기', emoji: '🏐', genre: 'survival', modes: ['play', 'chem'],
+    howTo: '작은 공은 점프로 넘고, 큰 공은 옆으로 피해요!', timeLimit: 84, implemented: true, buildLevel: buildDodge,
   },
   {
     id: 'treasure', name: '반짝 보물섬', emoji: '💎', genre: 'collect', modes: ['play', 'chem'],

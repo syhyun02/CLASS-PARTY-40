@@ -4,7 +4,7 @@
  * 서버 틱 시간, CPU, 메모리, 통신량, 왕복 지연, 스냅샷 수신 주기를 출력한다.
  */
 import { io, type Socket } from 'socket.io-client';
-import { CHEM_DOOR_X, DT, QUIZ_PAD_POS, buildLevel, chemRowZ, sweeperAngle, sweeperSpeed, TICK_RATE, decodeSnapshot, type CreateRes, type JoinRes, type RoomState, type SelfMsg } from '@shared';
+import { CHEM_DOOR_X, DT, QUIZ_PAD_POS, ballPos, buildLevel, chemRowZ, sweeperAngle, sweeperSpeed, TICK_RATE, decodeSnapshot, type CreateRes, type JoinRes, type RoomState, type SelfMsg } from '@shared';
 
 const arg = (name: string, def: string) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -126,6 +126,24 @@ const timer = setInterval(() => {
         const a = lt * (0.5 + (i % 5) * 0.15) + i * 1.3;
         tx = Math.sin(a) * R * (0.3 + (i % 4) * 0.2); tz = Math.cos(a * 1.3) * R * (0.3 + (i % 3) * 0.25);
       }
+      let ballJump = 0;
+      // 굴러오는 공: 1초 안에 내 자리를 지나갈 공이 있으면 작은 공은 뛰어넘고 큰 공은 옆으로 비킨다
+      if (lv.balls) {
+        tx = Math.sin(i * 2.4) * 3; tz = Math.cos(i * 2.4) * 3;
+        for (const bl of lv.balls) {
+          if (bl.at > lt + 1.2) break;
+          if (lt > bl.end) continue;
+          const [bx, bz] = ballPos(bl, lt);
+          const rx = b.x - bx, rz = b.z - bz;
+          const along = rx * bl.dx + rz * bl.dz; // 공 앞쪽으로 얼마나 떨어져 있나
+          const side = rx * bl.dz - rz * bl.dx; // 공의 길에서 옆으로 얼마나 떨어져 있나
+          if (along < -0.5 || along > bl.speed * 1.0 || Math.abs(side) > bl.r + 1.1) continue;
+          if (bl.r < 1 && along < bl.speed * 0.22 && b.grounded) ballJump = 1;
+          else if (bl.r >= 1) { const sg = side >= 0 ? 1 : -1; tx = b.x + bl.dz * sg * 3; tz = b.z - bl.dx * sg * 3; }
+        }
+        const rr = Math.hypot(tx, tz), lim = lt > 50 ? 6 : 9;
+        if (rr > lim) { tx *= lim / rr; tz *= lim / rr; }
+      }
       // 가운데 기둥에서는 떨어져 선다
       if (Math.hypot(tx, tz) < 1.6) { const a = i * 2.4; tx += Math.sin(a) * 1.0; tz += Math.cos(a) * 1.0; }
       let jmp = 0, hold = false;
@@ -139,6 +157,7 @@ const timer = setInterval(() => {
         }
       }
       if (hold) jmp = 0;
+      if (ballJump) jmp = 1;
       const dx = tx - b.x, dz = tz - b.z, dl = Math.hypot(dx, dz);
       const sp = dl > 0.3 ? 1 : 0;
       const act = (room.levelId === 'sumo' || room.levelId === 'tail') && Math.sin(lt * 3 + i) > 0.7 ? 2 : 0;

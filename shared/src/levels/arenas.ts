@@ -1,5 +1,5 @@
 import { COUNTDOWN_SEC } from '../constants';
-import { NEVER, type Bomb, type Item, type LevelDef, type Sweeper, type Tile } from '../level';
+import { NEVER, type Ball, type Bomb, type Item, type LevelDef, type Sweeper, type Tile } from '../level';
 import { rng } from './race';
 
 const T0 = COUNTDOWN_SEC; // 경기 시작 시각(맵 시간 기준)
@@ -231,5 +231,73 @@ export function buildTail(seed: number): LevelDef {
     l.statics.push({ p: [Math.sin(a) * d, 1.1, Math.cos(a) * d], h: [w, 1.1, dpt], color: ['#ff8fc7', '#5cc8ff', '#5fe0a8', '#b693ff'][i % 4] });
   }
   l.spawnRing = 3.6;
+  return l;
+}
+
+/**
+ * 피구공 피하기
+ * 경기장 밖에서 공이 굴러 들어온다. 작은 공은 점프로 넘고, 큰 공은 옆으로 피한다.
+ * 맞으면 공이 가는 방향으로 날아가서 경기장 밖으로 떨어질 수 있다.
+ * 갈수록 공이 잦아지고 빨라지며, 한쪽에서 여러 개가 나란히 오는 "일제 사격"이 섞인다. 중간에 바깥 고리가 무너진다.
+ */
+export function buildDodge(seed: number): LevelDef {
+  const r = rng(seed);
+  const l = base('dodge', '피구공 피하기');
+  const R = 11, R2 = 8, shrink = T0 + 48;
+  l.tiles = [disc(R, -0.04, '#5cc8ff', shrink), disc(R2, 0, '#ffd04d')];
+  l.killY = -7;
+  const COLORS = ['#ff6b6b', '#ffa94d', '#9775fa', '#4dabf7', '#51cf66'];
+  const balls: Ball[] = [];
+  const START = R + 7; // 경기장 가장자리에서 7m 밖에서 출발(굴러오는 게 보이게)
+  const add = (at: number, angle: number, aimX: number, aimZ: number, speed: number, big: boolean) => {
+    const x = Math.sin(angle) * START, z = Math.cos(angle) * START;
+    let dx = aimX - x, dz = aimZ - z;
+    const len = Math.hypot(dx, dz); dx /= len; dz /= len;
+    // 경기장 원(반지름 R)과 만나는 거리: 들어오는 지점과 나가는 지점
+    const b = x * dx + z * dz, c = x * x + z * z - R * R, disc2 = b * b - c;
+    if (disc2 <= 0) return;
+    const tIn = -b - Math.sqrt(disc2), tOut = -b + Math.sqrt(disc2);
+    const rad = big ? 1.15 : 0.55;
+    balls.push({
+      x, z, dx, dz, speed, r: rad, at,
+      enter: at + tIn / speed, end: at + (tOut + 3) / speed,
+      color: COLORS[balls.length % COLORS.length],
+    });
+  };
+  let t = T0 + 2;
+  while (t < T0 + 78) {
+    const p = Math.min(1, (t - T0) / 65); // 0 → 1: 갈수록 어려워진다
+    const speed = 6 + p * 6 + r() * 1.5;
+    const angle = r() * Math.PI * 2;
+    const lim = t + 2 > shrink ? R2 - 1.5 : R - 3;
+    if (p > 0.35 && r() < 0.15 + p * 0.15) {
+      // 일제 사격: 같은 쪽에서 작은 공 여러 개가 나란히 온다(점프로 넘어야 한다)
+      const n = 3 + Math.floor(p * 3);
+      for (let k = 0; k < n; k++) {
+        // 모두 가운데를 향해 같은 방향으로 출발시킨 뒤, 출발점만 옆으로 벌려 나란히 굴러오게 한다
+        const off = (k - (n - 1) / 2) * 2.6;
+        const before = balls.length;
+        add(t + k * 0.06, angle, 0, 0, speed * 0.9, false);
+        if (balls.length > before) {
+          const bl = balls[balls.length - 1];
+          bl.x += Math.cos(angle) * off; bl.z += -Math.sin(angle) * off;
+        }
+      }
+      t += 2.6 - p * 0.8;
+    } else {
+      const big = r() < 0.25 + p * 0.25;
+      // 아무 데나가 아니라 경기장 안쪽의 한 지점을 노린다(사람이 모인 곳을 지나가게)
+      add(t, angle, (r() * 2 - 1) * lim, (r() * 2 - 1) * lim, big ? speed * 0.8 : speed, big);
+      t += Math.max(0.45, 2.0 - p * 1.4) * (0.7 + r() * 0.6); // 처음엔 2초에 하나, 끝엔 0.6초에 하나꼴
+    }
+  }
+  balls.sort((a, b) => a.at - b.at);
+  // 일제 사격은 출발점을 옮겼으므로 경기장 진입 시각을 다시 계산한다
+  for (const b of balls) {
+    const bb = b.x * b.dx + b.z * b.dz, c = b.x * b.x + b.z * b.z - R * R, d2 = bb * bb - c;
+    if (d2 > 0) { b.enter = b.at + (-bb - Math.sqrt(d2)) / b.speed; b.end = b.at + (-bb + Math.sqrt(d2) + 3) / b.speed; }
+  }
+  l.balls = balls;
+  l.spawnRing = 5.5;
   return l;
 }

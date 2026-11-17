@@ -1,7 +1,7 @@
 import { useFrame } from '@react-three/fiber';
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { chemDoorOrder, moverOffset, sweeperAngle, type LevelDef, type Tile } from '@shared';
+import { ballPos, chemDoorOrder, moverOffset, sweeperAngle, type LevelDef, type Tile } from '@shared';
 import { net } from '../game/net';
 import { play } from '../game/sound';
 import { useStore } from '../game/store';
@@ -470,6 +470,123 @@ function QuizSigns({ level }: { level: LevelDef }) {
   );
 }
 
+/** 피구공 무늬: 배구공처럼 곡선 띠가 있는 흰 공에 색 띠를 두른다 */
+function ballTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 128;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, 256, 128);
+  g.fillStyle = '#d9d9d9';
+  for (let i = 0; i < 3; i++) { g.beginPath(); g.ellipse(42 + i * 86, 64, 30, 70, 0, 0, Math.PI * 2); g.fill(); }
+  g.strokeStyle = '#2b2145'; g.lineWidth = 5;
+  for (let i = 0; i <= 4; i++) { g.beginPath(); g.moveTo(i * 64, 0); g.bezierCurveTo(i * 64 + 26, 40, i * 64 - 26, 88, i * 64, 128); g.stroke(); }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+const UP = new THREE.Vector3(0, 1, 0);
+const AXIS = new THREE.Vector3();
+const BQ = new THREE.Quaternion();
+
+/**
+ * 굴러오는 공: 들어오기 1.5초 전부터 경기장 가장자리에 빨간 화살표로 예고하고,
+ * 공은 가장자리 바로 밖에서 툭 튀어나와 굴러 들어온다.
+ */
+function Balls({ level }: { level: LevelDef }) {
+  const balls = level.balls ?? [];
+  const MAX = 24;
+  const body = useRef<THREE.InstancedMesh>(null!);
+  const shadow = useRef<THREE.InstancedMesh>(null!);
+  const warn = useRef<THREE.InstancedMesh>(null!);
+  const sphere = useMemo(() => new THREE.SphereGeometry(1, 20, 14), []);
+  const disc = useMemo(() => new THREE.CircleGeometry(1, 20).rotateX(-Math.PI / 2), []);
+  // 바닥에 눕힌 화살표(뾰족한 쪽이 +z)
+  const arrow = useMemo(() => {
+    const sh = new THREE.Shape();
+    sh.moveTo(0, 1); sh.lineTo(0.75, 0); sh.lineTo(0.3, 0); sh.lineTo(0.3, -0.9); sh.lineTo(-0.3, -0.9); sh.lineTo(-0.3, 0); sh.lineTo(-0.75, 0); sh.closePath();
+    return new THREE.ShapeGeometry(sh).rotateX(-Math.PI / 2).rotateY(Math.PI);
+  }, []);
+  const tex = useMemo(() => ballTexture(), []);
+  const first = useRef(0);
+  const warned = useRef(-1);
+
+  useFrame((state) => {
+    if (!balls.length) return;
+    const t = net.levelTime();
+    // 이미 지나간 공은 다시 보지 않는다(출발 시각 순으로 정렬되어 있다)
+    while (first.current < balls.length && balls[first.current].end < t - 0.5 && balls[first.current].at < t) first.current++;
+    if (first.current > 0 && t < balls[first.current - 1].at) first.current = 0;
+    let n = 0, w = 0;
+    const pulse = 0.75 + Math.sin(state.clock.elapsedTime * 16) * 0.25;
+    for (let i = first.current; i < balls.length && (n < MAX || w < MAX); i++) {
+      const b = balls[i];
+      if (b.enter - 1.5 > t) break;
+      if (t > b.end) continue;
+      // 내 쪽으로 오는 공이면 경고음을 낸다(뒤에서 오는 공은 화면에 안 보이므로)
+      if (i > warned.current && t >= b.enter - 0.9) {
+        warned.current = i;
+        const me = net.myState();
+        if (me) {
+          const rx = me.x - b.x, rz = me.z - b.z;
+          const side = Math.abs(rx * b.dz - rz * b.dx);
+          if (side < b.r + 2.5 && rx * b.dx + rz * b.dz > 0) play('warn', 1.2);
+        }
+      }
+      // 예고 화살표: 공이 들어올 지점에서 안쪽을 가리킨다
+      if (t < b.enter && w < MAX) {
+        const [ex, ez] = ballPos(b, b.enter);
+        const k = 1 - (b.enter - t) / 1.5;
+        dummy.position.set(ex - b.dx * 0.6, 0.05, ez - b.dz * 0.6);
+        dummy.rotation.set(0, Math.atan2(b.dx, b.dz), 0);
+        dummy.scale.setScalar((b.r > 1 ? 1.5 : 1.05) * (0.6 + 0.4 * k) * pulse);
+        dummy.updateMatrix();
+        warn.current.setMatrixAt(w++, dummy.matrix);
+      }
+      // 공: 가장자리 조금 밖에서 나타나 굴러간다
+      const appear = b.enter - 0.45;
+      if (t >= appear && n < MAX) {
+        const [x, z] = ballPos(b, t);
+        const pop = Math.min(1, (t - appear) / 0.18);
+        const dist = (t - b.at) * b.speed;
+        AXIS.set(b.dz, 0, -b.dx).normalize();
+        BQ.setFromAxisAngle(AXIS, dist / b.r);
+        dummy.position.set(x, b.r + Math.max(0, 1 - pop) * 0.8, z);
+        dummy.quaternion.copy(BQ);
+        dummy.scale.setScalar(b.r * pop);
+        dummy.updateMatrix();
+        body.current.setMatrixAt(n, dummy.matrix);
+        body.current.setColorAt(n, col.set(b.color).lerp(WHITE_C, 0.15));
+        dummy.quaternion.identity();
+        dummy.position.set(x, 0.04, z);
+        dummy.scale.set(b.r * 0.95 * pop, 1, b.r * 0.95 * pop);
+        dummy.updateMatrix();
+        shadow.current.setMatrixAt(n, dummy.matrix);
+        n++;
+      }
+    }
+    body.current.count = n; shadow.current.count = n; warn.current.count = w;
+    body.current.instanceMatrix.needsUpdate = true; shadow.current.instanceMatrix.needsUpdate = true; warn.current.instanceMatrix.needsUpdate = true;
+    if (body.current.instanceColor) body.current.instanceColor.needsUpdate = true;
+  });
+
+  if (!balls.length) return null;
+  return (
+    <group>
+      <instancedMesh ref={body} args={[sphere, undefined, MAX]} frustumCulled={false}>
+        <meshLambertMaterial map={tex} />
+      </instancedMesh>
+      <instancedMesh ref={shadow} args={[disc, undefined, MAX]} frustumCulled={false} renderOrder={1}>
+        <meshBasicMaterial color="#1f1640" transparent opacity={0.3} depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
+      </instancedMesh>
+      <instancedMesh ref={warn} args={[arrow, undefined, MAX]} frustumCulled={false} renderOrder={2}>
+        <meshBasicMaterial color="#ff3b3b" transparent opacity={0.85} depthWrite={false} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={-3} />
+      </instancedMesh>
+    </group>
+  );
+}
+const WHITE_C = new THREE.Color('#ffffff');
+
 const GEM1 = new THREE.Color('#00a8ff');
 const GEM3 = new THREE.Color('#ffb700');
 
@@ -626,6 +743,7 @@ export function LevelView({ level }: { level: LevelDef }) {
       <instancedMesh ref={statics} args={[box, blockMat, Math.max(1, level.statics.length)]} count={level.statics.length} receiveShadow={shadow} />
       <Tiles level={level} low={low} cheap={cheap} />
       <Bombs level={level} />
+      <Balls level={level} />
       <QuizSigns level={level} />
       {(level.curtains ?? []).map((c, i) => (
         <mesh key={i} position={c.p} scale={[c.h[0], c.h[1], 1]}>

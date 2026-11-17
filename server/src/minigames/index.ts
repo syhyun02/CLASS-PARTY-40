@@ -19,6 +19,7 @@ const REGISTRY: Record<string, MinigameServer> = {
   tiles: survivalGame('tiles'),
   last: survivalGame('last'),
   bomb: survivalGame('bomb'),
+  dodge: survivalGame('dodge'),
   treasure: collectGame('treasure'),
 };
 
