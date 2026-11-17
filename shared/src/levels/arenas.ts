@@ -123,13 +123,14 @@ export function buildBomb(seed: number): LevelDef {
   const r = rng(seed);
   const l = base('bomb', '펑펑 광장');
   const N = 7, pitch = 3.2, half = 1.56, c = (N - 1) / 2;
-  const shrink = T0 + 40;
+  // 바깥 고리가 30초에, 그다음 고리가 55초에 무너져 마지막엔 가운데 3×3칸만 남는다
+  const shrink1 = T0 + 30, shrink2 = T0 + 55;
   for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
     const ring = Math.max(Math.abs(i - c), Math.abs(j - c));
-    const off = ring === 3 ? shrink : NEVER;
+    const off = ring === 3 ? shrink1 : ring === 2 ? shrink2 : NEVER;
     l.tiles!.push({
       shape: 'box', p: [(i - c) * pitch, -0.4, (j - c) * pitch], h: [half, 0.4, half],
-      color: (i + j) % 2 ? '#b693ff' : '#5cc8ff', warnAt: off - 3, offAt: off,
+      color: ring === 2 ? '#ff8fc7' : (i + j) % 2 ? '#b693ff' : '#5cc8ff', warnAt: off - 3, offAt: off,
     });
   }
   // 엄폐용 벽 4개(바람개비 모양으로 배치)
@@ -137,19 +138,23 @@ export function buildBomb(seed: number): LevelDef {
     l.statics.push({ p: [x, 0.95, z], h: alongX ? [1.7, 0.95, 0.35] : [0.35, 0.95, 1.7], color: '#ffd04d' });
   wall(-4.8, -3.2, true); wall(4.8, 3.2, true); wall(-3.2, 4.8, false); wall(3.2, -4.8, false);
   const bombs: Bomb[] = [];
-  let t = T0 + 3, k = 0;
+  let t = T0 + 2.5, k = 0;
   while (t < T0 + 74) {
-    const prog = Math.min(1, (t - T0) / 60);
-    const lim = (t + 2.5 > shrink ? 7.4 : 10.4); // 무너진 고리 위에는 놓지 않는다
-    const big = k % 5 === 4;
-    const count = prog > 0.55 && k % 3 === 0 ? 2 : 1; // 후반에는 두 개씩
+    const prog = Math.min(1, (t - T0) / 60); // 0 → 1: 갈수록 어려워진다
+    // 무너질 칸 위에는 놓지 않는다
+    const lim = t + 2.5 > shrink2 ? 4.2 : t + 2.5 > shrink1 ? 7.4 : 10.4;
+    const big = k % 4 === 3;
+    // 중반부터 두 개씩, 후반엔 세 개까지 한꺼번에 떨어진다
+    const count = prog > 0.7 && k % 3 === 0 ? 3 : prog > 0.3 && k % 2 === 0 ? 2 : 1;
     for (let i = 0; i < count; i++) {
+      // 절반은 사람이 모이는 가운데 쪽을 노린다
+      const spread = r() < 0.5 ? lim * 0.45 : lim;
       bombs.push({
-        p: [(r() * 2 - 1) * lim, 0, (r() * 2 - 1) * lim], at: t + i * 0.25,
-        fuse: big ? 3 : 2.3 - prog * 0.7, radius: big ? 6.2 : 4.4,
+        p: [(r() * 2 - 1) * spread, 0, (r() * 2 - 1) * spread], at: t + i * 0.2,
+        fuse: big ? 2.6 - prog * 0.6 : 2.0 - prog * 0.8, radius: big ? 6.5 : 4.4 + prog * 0.6,
       });
     }
-    t += 2.3 - prog * 1.5;
+    t += 1.8 - prog * 1.25;
     k++;
   }
   l.bombs = bombs.sort((a, b) => a.at + a.fuse - (b.at + b.fuse));

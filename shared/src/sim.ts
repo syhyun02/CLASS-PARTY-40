@@ -295,8 +295,8 @@ export class SimWorld {
           if (hit) continue; // 벽에 가려졌다
         }
         const a = d > 0.05 ? Math.atan2(ox, oz) : slot * 2.4;
-        const power = 13 * (1 - (d / b.radius) * 0.55);
-        s.vx = Math.sin(a) * power; s.vz = Math.cos(a) * power; s.vy = 8.5;
+        const power = 15 * (1 - (d / b.radius) * 0.5);
+        s.vx = Math.sin(a) * power; s.vz = Math.cos(a) * power; s.vy = 9;
         s.stun = STUN_TICKS; s.grounded = 0; s.coyote = 0; s.mover = -1;
       }
     }
@@ -316,11 +316,64 @@ export class SimWorld {
   }
 
   respawn(s: PlayerState, slot: number) {
-    const [x, y, z] = spawnPoint(this.level, s.cp, slot);
+    const [x, y, z] = this.safeSpawn(s.cp, slot);
     s.x = x; s.y = y + 0.05; s.z = z;
     s.vx = s.vy = s.vz = 0;
     s.stun = 0; s.shove = 0; s.grounded = 0; s.mover = -1; s.coyote = 0; s.jumpBuf = 0;
     s.falls++;
+  }
+
+  /**
+   * 부활 위치 고르기. 체크포인트 주변 격자 가운데
+   * (1) 바로 아래에 고정된 바닥이 체크포인트와 같은 높이에 있고(움직이는 발판·허공·벽 위 제외)
+   * (2) 회전봉이 지나가는 원, 미는 벽이 오가는 범위, 점프 발판에서 떨어진 자리만 쓴다.
+   * 같은 맵·같은 시각이면 같은 결과가 나와서 서버와 클라이언트 예측의 부활 위치가 일치한다.
+   */
+  private safeSpawn(cp: number, slot: number): [number, number, number] {
+    const L = this.level;
+    const c = L.checkpoints[Math.min(cp, L.checkpoints.length - 1)];
+    const [sx, sy, sz] = c.spawn;
+    const safe: [number, number, number][] = [];
+    const STEP = 1.4, rows = [0, -1, 1, -2, 2, -3, 3, -4, 4];
+    for (const r of rows) {
+      for (let k = 0; k < 10; k++) {
+        const x = sx + (k - 4.5) * STEP, z = sz + r * STEP;
+        if (this.spawnBlocked(x, sy, z)) continue;
+        if (!this.groundAt(x, sy, z)) continue;
+        safe.push([x, sy, z]);
+      }
+    }
+    if (!safe.length) return spawnPoint(L, cp, slot); // 맞는 자리가 없으면 원래 규칙대로
+    return safe[slot % safe.length];
+  }
+
+  /** (x, z) 아래에 높이 y 근처의 고정된 바닥이 있나 */
+  private groundAt(x: number, y: number, z: number): boolean {
+    this.ray.origin.x = x; this.ray.origin.y = y + 2; this.ray.origin.z = z;
+    this.ray.dir.x = 0; this.ray.dir.y = -1; this.ray.dir.z = 0;
+    // 캐릭터 몸통 정도의 폭이 모두 바닥 위에 있어야 한다(가장자리에 걸치면 미끄러져 떨어진다)
+    for (const [ox, oz] of [[0, 0], [0.35, 0], [-0.35, 0], [0, 0.35], [0, -0.35]]) {
+      this.ray.origin.x = x + ox; this.ray.origin.z = z + oz;
+      const hit = this.world.castRay(this.ray, 3.5, true, undefined, PLAYER_GROUPS, this.probe, undefined,
+        (col) => !this.moverHandles.has(col.handle));
+      if (!hit || Math.abs(2 - hit.timeOfImpact) > 0.6) return false;
+    }
+    return true;
+  }
+
+  /** 회전봉·미는 벽·점프 발판 근처인가 */
+  private spawnBlocked(x: number, y: number, z: number): boolean {
+    const L = this.level;
+    for (const sw of L.sweepers) {
+      if (sw.c[1] - sw.r > y + PLAYER_CENTER_Y * 2 || sw.c[1] + sw.r < y) continue;
+      if (Math.hypot(x - sw.c[0], z - sw.c[2]) < sw.len + sw.r + 1.0) return true;
+    }
+    for (const m of L.movers) {
+      if (m.kind !== 'wall') continue;
+      if (Math.abs(x - m.p[0]) < m.h[0] + Math.abs(m.travel[0]) + 0.8 && Math.abs(z - m.p[2]) < m.h[2] + Math.abs(m.travel[2]) + 0.8) return true;
+    }
+    for (const pd of L.pads) if (Math.abs(x - pd.p[0]) < pd.h[0] + 0.4 && Math.abs(z - pd.p[2]) < pd.h[2] + 0.4) return true;
+    return false;
   }
 
   /** 수평으로 살짝 민다(플레이어끼리 밀어내기용). 벽과 바닥 충돌은 그대로 지킨다. */

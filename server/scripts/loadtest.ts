@@ -81,7 +81,7 @@ const timer = setInterval(() => {
         if (lt < bm.at || lt > bm.at + bm.fuse) continue;
         const ox = b.x - bm.p[0], oz = b.z - bm.p[2], d = Math.hypot(ox, oz);
         if (d > bm.radius + 0.8) continue;
-        const lim = lt > 40 ? 6.5 : 9.5;
+        const lim = lt > 53 ? 3.4 : lt > 30 ? 6.5 : 9.5;
         let a = d > 0.1 ? Math.atan2(ox, oz) : i;
         for (let k = 0; k < 8; k++) {
           const cx = bm.p[0] + Math.sin(a) * (bm.radius + 1.6), cz = bm.p[2] + Math.cos(a) * (bm.radius + 1.6);

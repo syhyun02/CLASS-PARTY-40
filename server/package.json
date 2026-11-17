@@ -9,7 +9,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "loadtest": "tsx scripts/loadtest.ts",
-    "racebot": "tsx scripts/racebot.ts"
+    "racebot": "tsx scripts/racebot.ts",
+    "spawncheck": "tsx scripts/spawncheck.ts"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.19.3",
