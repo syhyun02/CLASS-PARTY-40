@@ -1,7 +1,7 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import type { Server, Socket } from 'socket.io';
 import {
-  COUNTDOWN_SEC, DT, FLAG_ACT, FLAG_DONE, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_MOVING, FLAG_STUN, MAX_PLAYERS, NO_INPUT, PLAYER_COLORS, PLAYER_RADIUS,
+  COUNTDOWN_SEC, DT, FLAG_ACT, FLAG_DONE, FLAG_GRAB, FLAG_HELD, FLAG_GROUNDED, FLAG_HIDDEN, FLAG_MOVING, FLAG_STUN, MAX_PLAYERS, NO_INPUT, PLAYER_COLORS, PLAYER_RADIUS,
   DEFAULT_BANK, PODIUM, PODIUM_Z, SNAPSHOT_EVERY, SimWorld, TICK_RATE, buildLevel, cleanBank, pickQuestions, encodeSnapshot, getGame, newPlayerState, packState,
   type HostCmd, type InputMsg, type JoinReq, type JoinRes, type LevelDef, type Phase, type PlayerInput,
   type BankQ, type PickedQ, type PlayerState, type QLevel, type RoomConfig, type RoomState, type RoundRow, type SelfMsg, type SnapPlayer,
@@ -14,6 +14,8 @@ const sec = (s: number) => Math.round(s * TICK_RATE);
 const DRAW_TICKS = sec(6);
 const COUNTDOWN_TICKS = sec(COUNTDOWN_SEC);
 const RESULT_TICKS = sec(12);
+const GRAB_MAX = Math.round(2.5 * TICK_RATE);
+const GRAB_COOLDOWN = Math.round(1.5 * TICK_RATE);
 const MAX_QUEUE = Math.round(0.25 * TICK_RATE); // 입력을 최대 0.25초치까지 쌓아 둔다
 const STARVE_TICKS = Math.round(0.27 * TICK_RATE);
 const MAX_TOKENS = Math.round(0.13 * TICK_RATE);
@@ -31,6 +33,12 @@ class Player implements GamePlayer {
   done = false;
   out = false;
   pushAt = -999;
+  /** 잡기: 지금 잡고 있는 상대, 잡기 시작한 틱, 다시 잡을 수 있는 틱 */
+  grabbing: Player | null = null;
+  grabStart = 0;
+  grabReady = 0;
+  held = false;
+  jumpWas = false;
   place: number | null = null;
   leftAt = 0;
   constructor(public id: number, public token: string, public name: string, public color: string, level: LevelDef) {
@@ -245,6 +253,7 @@ export class Room {
     this.gameDirty = false;
     for (const p of this.players.values()) {
       p.state = newPlayerState(this.level, p.id);
+      p.grabbing = null;
       p.queue.length = 0;
       p.input = { ...NO_INPUT };
     }
@@ -358,16 +367,18 @@ export class Room {
         p.input.mz = Math.max(-127, Math.min(127, m[2] | 0)) / 127;
         p.input.jump = (m[3] & 1) !== 0;
         p.input.action = (m[3] & 2) !== 0;
-        sim.stepPlayer(p.state, p.input, p.id, can);
+        p.input.grab = (m[3] & 4) !== 0;
+        sim.stepPlayer(p.state, p.input, p.id, can, p.grabbing !== null || p.held);
         stepped = true;
       }
       if (stepped) p.starve = 0;
       else if (++p.starve > STARVE_TICKS) {
         // 입력이 0.3초 넘게 끊기면 조작 없이 물리만 진행한다(공중에 멈춰 있지 않게)
         p.input.mx = 0; p.input.mz = 0; p.input.jump = false; p.input.action = false;
-        sim.stepPlayer(p.state, p.input, p.id, can);
+        sim.stepPlayer(p.state, p.input, p.id, can, p.grabbing !== null || p.held);
       }
     }
+    this.updateGrabs();
     this.separatePlayers();
 
     if (this.phase === 'playing' && this.runtime) {
@@ -395,6 +406,62 @@ export class Room {
       this.io.to(this.channel).emit('g', { key: this.levelKey, state: this.gameState });
     }
     if (this.tick % SNAPSHOT_EVERY === 0) this.broadcastSnapshot();
+  }
+
+  /**
+   * 잡기: 버튼을 누르고 있는 동안 앞에 있는 가까운 상대를 붙잡아 끌어당긴다(서버 판정).
+   * 최대 2.5초까지 잡을 수 있고, 놓으면 1.5초 뒤에 다시 잡을 수 있다. 잡힌 쪽은 점프를 누르면 뿌리친다.
+   */
+  private updateGrabs() {
+    const MAX = GRAB_MAX, tick = this.tick;
+    for (const p of this.players.values()) p.held = false;
+    for (const p of this.players.values()) {
+      const ok = p.connected && p.active && !p.out && p.state.stun === 0 && this.canMove(p);
+      let t = p.grabbing;
+      if (t) {
+        const d = Math.hypot(t.state.x - p.state.x, t.state.z - p.state.z);
+        const broke = t.input.jump && !t.jumpWas; // 잡힌 쪽이 점프로 뿌리쳤다
+        if (!ok || !p.input.grab || broke || !t.connected || t.out || !t.active || this.players.get(t.id) !== t
+          || d > 2.4 || Math.abs(t.state.y - p.state.y) > 1.6 || tick - p.grabStart > MAX) {
+          p.grabbing = t = null;
+          p.grabReady = tick + GRAB_COOLDOWN;
+        }
+      }
+      if (!t && ok && p.input.grab && tick >= p.grabReady) {
+        // 앞쪽 부채꼴 안에서 가장 가까운 상대를 잡는다
+        const fx = Math.sin(p.state.yaw), fz = Math.cos(p.state.yaw);
+        let best: Player | null = null, bestD = 1.45;
+        for (const q of this.players.values()) {
+          if (q === p || !q.connected || !q.active || q.out) continue;
+          const dx = q.state.x - p.state.x, dz = q.state.z - p.state.z, d = Math.hypot(dx, dz);
+          if (d >= bestD || Math.abs(q.state.y - p.state.y) > 1.1) continue;
+          if (d > 0.3 && (dx * fx + dz * fz) / d < 0.2) continue;
+          bestD = d; best = q;
+        }
+        if (best) { p.grabbing = t = best; p.grabStart = tick; }
+      }
+      if (t) {
+        t.held = true;
+        const dx = t.state.x - p.state.x, dz = t.state.z - p.state.z, d = Math.hypot(dx, dz) || 0.001;
+        if (d > 1.05) {
+          // 팽팽한 끈처럼 거리를 유지한다: 잡은 쪽은 느려지고 잡힌 쪽은 끌려온다(도망쳐서 풀 수 없다)
+          const over = d - 1.05;
+          this.sim.nudge(t.state, (-dx / d) * over * 0.55, (-dz / d) * over * 0.55);
+          this.sim.nudge(p.state, (dx / d) * over * 0.45, (dz / d) * over * 0.45);
+        }
+      }
+    }
+    for (const p of this.players.values()) p.jumpWas = p.input.jump;
+  }
+
+  /** 방을 닫는다: 모두 첫 화면으로 돌려보낸다. */
+  close() {
+    this.io.to(this.channel).emit('closed');
+    for (const p of this.players.values()) {
+      if (p.socket) { p.socket.leave(this.channel); p.socket.data.playerId = undefined; p.socket.data.code = undefined; }
+    }
+    this.players.clear();
+    this.dispose();
   }
 
   /** 겹친 캐릭터를 서로 밀어낸다(서버 판정). 벽을 뚫지 않도록 물리 엔진을 거쳐 이동한다. */
@@ -431,6 +498,8 @@ export class Room {
       if (!p.connected || !p.active || p.out) flags |= FLAG_HIDDEN;
       if (Math.abs(s.vx) + Math.abs(s.vz) > 0.5) flags |= FLAG_MOVING;
       if (this.tick - p.pushAt < TICK_RATE * 0.3) flags |= FLAG_ACT;
+      if (p.grabbing) flags |= FLAG_GRAB;
+      if (p.held) flags |= FLAG_HELD;
       snap.push({ id: p.id, x: s.x, y: s.y, z: s.z, yaw: s.yaw, flags });
     }
     const buf = Buffer.from(encodeSnapshot(this.tick, snap));

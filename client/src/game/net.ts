@@ -1,11 +1,11 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import { io, type Socket } from 'socket.io-client';
 import {
-  DT, FLAG_HIDDEN, NO_INPUT, SNAPSHOT_EVERY, SimWorld, TICK_RATE, buildLevel, decodeSnapshot, newPlayerState, unpackState,
+  DT, FLAG_GRAB, FLAG_HELD, FLAG_HIDDEN, NO_INPUT, SNAPSHOT_EVERY, SimWorld, TICK_RATE, buildLevel, decodeSnapshot, newPlayerState, unpackState,
   type CollectState, type CreateRes, type HostCmd, type JoinRes, type LevelDef, type PlayerInput, type PlayerState, type RoomConfig,
   type GameStateMsg, type PersonalMsg, type RoomState, type SelfMsg, type SnapPlayer,
 } from '@shared';
-import { actionHeld, input, jumpHeld, resetCamera, worldMove } from './input';
+import { actionHeld, grabHeld, input, jumpHeld, resetCamera, worldMove } from './input';
 import { play } from './sound';
 import { useStore } from './store';
 
@@ -15,7 +15,7 @@ export interface RenderPlayer {
 }
 
 interface Snap { tick: number; players: Map<number, SnapPlayer> }
-interface Pending { seq: number; input: PlayerInput; canMove: boolean }
+interface Pending { seq: number; input: PlayerInput; canMove: boolean; slow: boolean }
 
 const INTERP_DELAY = (SNAPSHOT_EVERY + 2) * 1.0; // 틱. 스냅샷 간격보다 조금 길게(약 83ms) 잡아 끊김을 줄인다
 const MAX_PENDING = Math.round(1.5 * TICK_RATE);
@@ -56,6 +56,7 @@ class GameNet {
   private synced = false;
   private obstacleTick = 0;
   private actionWas = false;
+  private grabWas = false;
   stats = { corrections: 0, lastError: 0, pending: 0 };
 
   private out: RenderPlayer[] = [];
@@ -78,6 +79,7 @@ class GameNet {
       else if (m.wrong) useStore.setState({ mine: { ...cur, wrong: [...cur.wrong, m.wrong] } });
     });
     s.on('notice', (text: string) => { useStore.setState({ notice: text }); setTimeout(() => useStore.setState({ notice: null }), 6000); });
+    s.on('closed', () => this.exit(this.role === 'host' ? '방을 닫았어요.' : '선생님이 방을 닫았어요.'));
     s.on('kicked', () => this.exit('선생님이 내보냈어요.'));
     s.on('replaced', () => this.exit('다른 기기에서 같은 이름으로 접속했어요.'));
     setInterval(() => {
@@ -250,7 +252,7 @@ class GameNet {
       let t = rel;
       for (const p of this.pending) {
         sim.setTick(++t);
-        sim.stepPlayer(me, p.input, useStore.getState().myId!, p.canMove);
+        sim.stepPlayer(me, p.input, useStore.getState().myId!, p.canMove, p.slow);
         this.history.set(p.seq, [me.x, me.y, me.z]);
       }
       const dx = bx - me.x, dy = by - me.y, dz = bz - me.z;
@@ -319,21 +321,27 @@ class GameNet {
     const me = this.me!, sim = this.sim!;
     const mv = worldMove();
     const mxq = Math.round(mv.mx * 127), mzq = Math.round(mv.mz * 127);
-    const jump = jumpHeld(), action = actionHeld();
+    const jump = jumpHeld(), action = actionHeld(), grab = grabHeld();
     // 서버가 받는 값과 정확히 같도록 양자화한 값으로 예측한다
     const inp: PlayerInput = { mx: mxq / 127, mz: mzq / 127, jump, action };
     const canMove = this.canMoveNow();
     const seq = ++this.seq;
-    this.socket!.emit('in', [seq, mxq, mzq, (jump ? 1 : 0) | (action ? 2 : 0)]);
+    this.socket!.emit('in', [seq, mxq, mzq, (jump ? 1 : 0) | (action ? 2 : 0) | (grab ? 4 : 0)]);
     this.prev.x = me.x; this.prev.y = me.y; this.prev.z = me.z;
     const vy0 = me.vy, stun0 = me.stun;
     sim.setTick(++this.predTick);
-    sim.stepPlayer(me, inp, useStore.getState().myId!, canMove);
+    // 잡거나 잡혀 있으면 서버와 똑같이 느리게 예측한다(가장 최근 스냅샷의 내 상태로 판단)
+    const myId = useStore.getState().myId!;
+    const mineFlags = this.snaps[this.snaps.length - 1]?.players.get(myId)?.flags ?? 0;
+    const slow = (mineFlags & (FLAG_GRAB | FLAG_HELD)) !== 0;
+    sim.stepPlayer(me, inp, myId, canMove, slow);
     if (me.vy > 8 && vy0 <= 0.5) play(me.vy > 12 ? 'reveal' : 'jump', 0.8); // 점프 / 점프 발판
     if (me.stun > stun0 + 5) play('bonk');
     if (action && !this.actionWas && canMove) play('push', 0.8);
     this.actionWas = action;
-    this.pending.push({ seq, input: inp, canMove });
+    if (grab && !this.grabWas && canMove) play('push', 0.5);
+    this.grabWas = grab;
+    this.pending.push({ seq, input: inp, canMove, slow });
     this.history.set(seq, [me.x, me.y, me.z]);
   }
 

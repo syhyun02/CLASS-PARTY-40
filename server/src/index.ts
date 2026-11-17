@@ -98,7 +98,15 @@ io.on('connection', (socket) => {
 
   socket.on('host:cmd', (cmd: HostCmd) => {
     const room = roomOf();
-    if (room && socket.data.host && cmd && typeof cmd.type === 'string') room.hostCmd(cmd);
+    if (!room || !socket.data.host || !cmd || typeof cmd.type !== 'string') return;
+    if (cmd.type === 'close') {
+      // 교사가 방을 닫았다: 학생과 다른 교사 화면을 모두 내보내고 방을 지운다
+      rooms.delete(room.code);
+      room.close();
+      for (const id of room.hosts) { const hs = io.sockets.sockets.get(id); if (hs) { hs.leave(room.channel); hs.data.host = false; hs.data.code = undefined; } }
+      return;
+    }
+    room.hostCmd(cmd);
   });
 
   socket.on('join', (req: JoinReq, ack: (r: JoinRes) => void) => {

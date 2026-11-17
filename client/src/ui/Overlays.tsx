@@ -168,7 +168,50 @@ export function TailHud({ room, myId }: { room: RoomState; myId: number | null }
   );
 }
 
-/** 정답 발판: 문제, 보기(발판 색), 남은 시간, 채점 결과 */
+/**
+ * 문제 띠: 화면 위쪽에 얇게 뜨는 문제 표시. 경기장을 가리지 않도록 두 줄까지만 보이고,
+ * 누르면 전체 문제와 보기가 펼쳐진다. 보기는 발판·문 위의 팻말에 항상 떠 있다.
+ */
+function QuestionStrip({ label, text, extra, progress, urgent, options, answer, children }: {
+  label: string; text: string; extra?: React.ReactNode; progress?: number; urgent?: boolean;
+  options?: { text: string; color: string }[]; answer?: number; children?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const multi = text.includes('\n'); // 줄바꿈이 있는 문제(식, 그림 문자)는 자르지 않는다
+  return (
+    <div className="pointer-events-auto w-[min(460px,50vw)] cursor-pointer rounded-2xl bg-white/85 px-3 py-1.5 text-center shadow-popsm backdrop-blur-sm" onClick={() => setOpen(!open)}>
+      <div className="flex items-center justify-between text-[11px] leading-none opacity-60"><span>{label}</span><span>{open ? '접기 ▲' : '펼치기 ▼'}</span></div>
+      {extra}
+      <div className={`whitespace-pre-line font-display text-sm leading-snug sm:text-lg ${open || multi ? '' : 'line-clamp-2'}`}>{text}</div>
+      {open && options && (
+        <div className="mt-1 grid grid-cols-2 gap-1 text-left">
+          {options.map((o, i) => (
+            <div key={i} className={`rounded-lg border-2 px-1.5 py-0.5 text-xs leading-tight sm:text-sm ${answer !== undefined && answer >= 0 ? (i === answer ? 'bg-mint' : 'opacity-40') : 'bg-white'}`} style={{ borderColor: o.color }}>{o.text}</div>
+          ))}
+        </div>
+      )}
+      {progress !== undefined && (
+        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-ink/10">
+          <div className={`h-full rounded-full ${urgent ? 'bg-bubble' : 'bg-grape'}`} style={{ width: `${Math.max(0, Math.min(1, progress)) * 100}%` }} />
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
+/** 해설: 조이스틱과 버튼 사이, 화면 아래 가운데에 작게 띄운다. */
+function ExplainStrip({ title, ok, text }: { title: string; ok: boolean; text?: string }) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center px-3">
+      <div className="w-[min(520px,46vw)] animate-pop rounded-2xl bg-cream/90 px-3 py-1.5 text-left text-xs leading-snug shadow-popsm backdrop-blur-sm sm:text-sm">
+        <b className={`font-display ${ok ? 'text-[#2f9e44]' : 'text-bubble'}`}>{title}</b>{text ? <> 💡 {text}</> : null}
+      </div>
+    </div>
+  );
+}
+
+/** 정답 발판: 문제 띠 + 남은 시간 + 채점 결과와 해설 */
 export function QuizHud({ myId }: { room: RoomState; myId: number | null }) {
   useTicker(10);
   const game = useStore((s) => s.game);
@@ -183,43 +226,33 @@ export function QuizHud({ myId }: { room: RoomState; myId: number | null }) {
   const ok = graded && myId !== null ? graded.correct.includes(myId) : null;
   const left = q ? Math.max(0, q.revealAt - t) : 0;
   const flashing = !!q?.flash && t - q.at < 3.5;
-  const long = !!q && q.options.some((o) => o.length > 7);
   return (
-    <div className={HUD_BAR} style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}>
-      <div className="chip tabular-nums">{myId !== null ? <>✅ <b className="text-xl text-bubble">{mine}</b> / {quiz.length}</> : '✅ 정답 발판'}</div>
-      {q ? (
-        <div className="card flex w-[min(520px,62vw)] flex-col items-center gap-1 !p-2 text-center">
-          <div className="text-xs opacity-60">문제 {qi + 1} / {quiz.length}</div>
-          {q.flash && (flashing
-            ? <div className="font-display text-3xl tracking-wider">{q.flash}</div>
-            : !revealed && <div className="font-display text-xl opacity-50">(가려졌어요)</div>)}
-          {q.word && (
-            <div className="font-display text-5xl leading-none" style={{ color: q.color, WebkitTextStroke: '6px #2b2145', paintOrder: 'stroke fill' }}>{q.word}</div>
-          )}
-          {(!q.flash || !flashing) && <div className="whitespace-pre-line font-display text-lg leading-tight sm:text-2xl">{q.text}</div>}
-          <div className={`grid w-full gap-1 ${long ? 'grid-cols-2' : 'grid-cols-4'}`}>
-            {q.options.map((o, i) => (
-              <div key={i} className={`flex items-center justify-center gap-1 rounded-xl border-4 px-1 py-0.5 font-display ${long ? 'text-sm leading-tight' : 'text-lg'} ${revealed && q.answer >= 0 ? (i === q.answer ? 'bg-mint' : 'opacity-35') : 'bg-white'}`} style={{ borderColor: QUIZ_PADS[i].color }}>
-                <span className={long ? '' : 'truncate'}>{o}</span>
-              </div>
-            ))}
-          </div>
-          {!revealed ? (
-            <div className="h-2 w-full overflow-hidden rounded-full bg-ink/10">
-              <div className={`h-full rounded-full ${left < 3 ? 'bg-bubble' : 'bg-grape'}`} style={{ width: `${(left / (q.revealAt - q.at)) * 100}%` }} />
-            </div>
-          ) : ok !== null && (
-            <div key={qi} className={`animate-pop font-display text-2xl ${ok ? 'text-[#2f9e44]' : 'text-bubble'}`}>{ok ? '⭕ 정답!' : '❌ 아쉬워요'}</div>
-          )}
-          {revealed && q.explain && <div className="rounded-xl bg-cream px-2 py-1 text-left text-sm leading-snug">💡 {q.explain}</div>}
-        </div>
-      ) : <div className="chip">곧 첫 문제가 나와요</div>}
-      <div className="w-16" />
-    </div>
+    <>
+      <div className={HUD_BAR} style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}>
+        <div className="chip tabular-nums">{myId !== null ? <>✅ <b className="text-xl text-bubble">{mine}</b> / {quiz.length}</> : '✅ 정답 발판'}</div>
+        {q ? (
+          <QuestionStrip
+            key={qi}
+            label={`문제 ${qi + 1} / ${quiz.length}${revealed ? '' : ` · ${Math.ceil(left)}초`}`}
+            text={q.flash && flashing ? '잘 기억해 두세요!' : q.text}
+            progress={revealed ? undefined : left / (q.revealAt - q.at)} urgent={left < 3}
+            options={q.options.map((o, i) => ({ text: o, color: QUIZ_PADS[i].color }))} answer={revealed ? q.answer : undefined}
+            extra={<>
+              {q.flash && flashing && <div className="font-display text-2xl tracking-wider">{q.flash}</div>}
+              {q.word && <div className="font-display text-3xl leading-none" style={{ color: q.color, WebkitTextStroke: '5px #2b2145', paintOrder: 'stroke fill' }}>{q.word}</div>}
+            </>}
+          />
+        ) : <div className="chip">곧 첫 문제가 나와요</div>}
+        <div className="w-16" />
+      </div>
+      {revealed && q && (ok !== null || q.explain) && (
+        <ExplainStrip key={qi} ok={ok !== false} title={ok === null ? `정답: ${q.options[q.answer] ?? ''}` : ok ? '⭕ 정답!' : `❌ 정답은 "${q.options[q.answer] ?? ''}"`} text={q.explain} />
+      )}
+    </>
   );
 }
 
-/** 화학 미로: 레이스 정보 + 지금 풀 문제 + 방금 통과한 문제의 해설 */
+/** 화학 미로: 레이스 정보 + 지금 풀 문제 띠 + 방금 통과한 문제의 해설 */
 export function ChemMazeHud({ room, myId }: { room: RoomState; myId: number | null }) {
   useTicker(4);
   const mine = useStore((s) => s.mine);
@@ -232,22 +265,16 @@ export function ChemMazeHud({ room, myId }: { room: RoomState; myId: number | nu
   const q = quiz[qi];
   const ex = mine.explain;
   // 해설은 다음 문 앞에 닿기 전까지 보여 준다
-  const showEx = ex && ex.text && (!q || !me || me.z < chemRowZ(qi) - 5) ? ex : null;
+  const showEx = ex && (!q || !me || me.z < chemRowZ(qi) - 5) ? ex : null;
   return (
     <>
       <RaceHud room={room} myId={myId} />
-      <div className="pointer-events-none absolute inset-x-0 top-[4.2rem] z-10 flex flex-col items-center gap-1 px-3">
-        {showEx ? (
-          <div key={showEx.q} className="card w-[min(560px,72vw)] animate-pop !bg-cream !p-2 text-left text-sm leading-snug">
-            <b className="font-display text-[#2f9e44]">⭕ 문제 {showEx.q + 1} 통과{showEx.first ? ' · 한 번에 정답!' : ''}</b> 💡 {showEx.text}
-          </div>
-        ) : q && (
-          <div className="card w-[min(560px,72vw)] !p-2 text-center">
-            <div className="text-xs opacity-60">문제 {qi + 1} / {quiz.length} · {myId !== null ? '정답이 걸린 문으로! (보기 순서는 사람마다 달라요)' : '학생마다 보기 순서가 달라요'}</div>
-            <div className="whitespace-pre-line font-display text-base leading-tight sm:text-xl">{q.text}</div>
-          </div>
-        )}
-      </div>
+      {q && (
+        <div className="pointer-events-none absolute inset-x-0 top-[4.4rem] z-10 flex justify-center px-3">
+          <QuestionStrip key={qi} label={`문제 ${qi + 1} / ${quiz.length} · ${myId !== null ? '정답이 걸린 문으로!' : '학생마다 보기 순서가 달라요'}`} text={q.text} />
+        </div>
+      )}
+      {showEx && <ExplainStrip key={showEx.q} ok title={`⭕ 문제 ${showEx.q + 1} 통과${showEx.first ? ' · 한 번에 정답!' : ''}`} text={showEx.text} />}
     </>
   );
 }

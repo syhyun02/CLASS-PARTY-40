@@ -3,6 +3,7 @@ export const input = {
   jx: 0, jy: 0, // 조이스틱(오른쪽 +, 위 +)
   jump: false,
   action: false,
+  grab: false,
   camYaw: 0, // 0 = +z를 바라봄
   camPitch: 0.42,
   keys: new Set<string>(),
@@ -31,7 +32,8 @@ export function worldMove(): { mx: number; mz: number } {
 }
 
 export const jumpHeld = () => input.jump || input.keys.has('Space');
-export const actionHeld = () => input.action || input.keys.has('ShiftLeft') || input.keys.has('ShiftRight') || input.keys.has('KeyE');
+export const actionHeld = () => input.action || input.keys.has('ShiftLeft') || input.keys.has('ShiftRight');
+export const grabHeld = () => input.grab || input.keys.has('KeyE') || input.keys.has('KeyF');
 
 export function bindKeyboard() {
   const down = (e: KeyboardEvent) => {
@@ -40,7 +42,7 @@ export function bindKeyboard() {
     if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
   };
   const up = (e: KeyboardEvent) => input.keys.delete(e.code);
-  const blur = () => { input.keys.clear(); input.jump = false; input.action = false; input.jx = 0; input.jy = 0; };
+  const blur = () => { input.keys.clear(); input.jump = false; input.action = false; input.grab = false; input.jx = 0; input.jy = 0; };
   window.addEventListener('keydown', down);
   window.addEventListener('keyup', up);
   window.addEventListener('blur', blur);

@@ -28,6 +28,8 @@ export interface PlayerInput {
   mz: number;
   jump: boolean;
   action: boolean;
+  /** 잡기 버튼(누르고 있는 동안). 물리 예측에는 쓰지 않고 서버가 판정한다. */
+  grab?: boolean;
 }
 
 export const NO_INPUT: PlayerInput = { mx: 0, mz: 0, jump: false, action: false };
@@ -47,6 +49,7 @@ export function newPlayerState(level: LevelDef, slot: number, cp = 0): PlayerSta
   return { x, y, z, vx: 0, vy: 0, vz: 0, yaw, grounded: 1, stun: 0, coyote: 0, jumpBuf: 0, jumpHeld: 0, mover: -1, cp, falls: 0, bomb: 0 };
 }
 
+const GRAB_SLOW = 0.55;
 const REHIT_TICKS = Math.round(0.2 * TICK_RATE); // 회전봉에 맞은 직후 다시 맞지 않는 시간
 const G_LEVEL = 0x0001;
 const G_PLAYER = 0x0002;
@@ -136,14 +139,15 @@ export class SimWorld {
 
   /**
    * 플레이어 한 명을 한 틱 전진시킨다. setTick(tick) 이후에 호출할 것.
-   * canMove=false면 입력을 무시한다(카운트다운, 결과 화면 등).
+   * canMove=false면 입력을 무시한다(카운트다운, 결과 화면 등). slow=true면 이동 속도가 줄어든다(잡기).
    */
-  stepPlayer(s: PlayerState, inp: PlayerInput, slot: number, canMove: boolean) {
+  stepPlayer(s: PlayerState, inp: PlayerInput, slot: number, canMove: boolean, slow = false) {
     const L = this.level;
     let mx = canMove ? inp.mx : 0;
     let mz = canMove ? inp.mz : 0;
     const len = Math.hypot(mx, mz);
     if (len > 1) { mx /= len; mz /= len; }
+    if (slow) { mx *= GRAB_SLOW; mz *= GRAB_SLOW; } // 잡거나 잡혀 있으면 느려진다
     const stunned = s.stun > 0;
     if (stunned) { s.stun--; mx = 0; mz = 0; }
 

@@ -45,6 +45,7 @@ export function HostScreen() {
   const room = useStore((s) => s.room);
   const [wide, setWide] = useState(false);
   const [bankOpen, setBankOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
   const [qr, setQr] = useState('');
   const url = useJoinUrl(room?.code ?? '');
   const left = useSecondsLeft(2);
@@ -177,6 +178,18 @@ export function HostScreen() {
               })}
             </div>
           </div>
+          {/* 방 닫기: 실수로 누르지 않게 한 번 더 확인한다 */}
+          {closing ? (
+            <div className="rounded-2xl bg-bubble/15 p-3">
+              <div className="mb-2 font-display">이 방을 닫을까요? 학생들이 모두 나가고 점수가 사라져요.</div>
+              <div className="flex gap-2">
+                <button className="btn-bubble flex-1 !py-2 !text-base" onClick={() => cmd({ type: 'close' })}>방 닫기</button>
+                <button className="btn-ghost flex-1 !py-2 !text-base" onClick={() => setClosing(false)}>취소</button>
+              </div>
+            </div>
+          ) : (
+            <button className="self-start rounded-full px-3 py-1 text-sm opacity-60 hover:bg-bubble hover:text-white hover:opacity-100" onClick={() => setClosing(true)}>🗑 방 닫기</button>
+          )}
         </aside>
       )}
     </div>

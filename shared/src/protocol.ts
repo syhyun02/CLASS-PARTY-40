@@ -75,7 +75,8 @@ export type HostCmd =
   | { type: 'end' } | { type: 'toLobby' } | { type: 'kick'; id: number }
   | { type: 'config'; config: RoomConfig }
   | { type: 'bank'; bank: BankQ[] }
-  | { type: 'sound'; on: boolean };
+  | { type: 'sound'; on: boolean }
+  | { type: 'close' };
 
 /** 클라이언트 → 서버 입력: [seq, mx(-127~127), mz, 버튼비트] */
 export type InputMsg = [number, number, number, number];
@@ -90,6 +91,8 @@ export const FLAG_DONE = 4; // 완주/탈락
 export const FLAG_HIDDEN = 8; // 관전 중(그리지 않음)
 export const FLAG_MOVING = 16;
 export const FLAG_ACT = 32; // 방금 밀치기를 썼다(동작 표시용)
+export const FLAG_GRAB = 64; // 누군가를 잡고 있다
+export const FLAG_HELD = 128; // 누군가에게 잡혀 있다
 const REC = 9;
 
 export interface SnapPlayer { id: number; x: number; y: number; z: number; yaw: number; flags: number }
