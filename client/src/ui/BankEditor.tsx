@@ -1,12 +1,12 @@
 import { useMemo, useRef, useState } from 'react';
-import { ALL_UNITS, DEFAULT_BANK, LEVEL_LABEL, SUBJECTS, UNIT_LABEL, UNIT_SHORT, cleanBank, type BankQ, type QLevel } from '@shared';
+import { DEFAULT_BANK, LEVEL_LABEL, SUBJECTS, UNIT_LABEL, UNIT_SHORT, cleanBank, type BankQ, type QLevel } from '@shared';
 import { net } from '../game/net';
 
 const KEY = 'cp40:bank';
 const LEVELS: QLevel[] = ['easy', 'normal', 'hard'];
 
 const VERSION_KEY = 'cp40:bankVersion';
-const VERSION = 2; // 2: 과학탐구실험1·2 문제 추가
+const VERSION = 3; // 2: 과학탐구실험1·2 추가, 3: 세계시민과 지리·한국사1·2·언어생활과 한자 추가
 
 export function loadBank(): BankQ[] {
   try {
@@ -15,9 +15,12 @@ export function loadBank(): BankQ[] {
       let b = cleanBank(JSON.parse(raw));
       if (b.length) {
         // 예전에 저장해 둔 문제은행에는 나중에 추가된 기본 문제가 없다 → 한 번만 덧붙여 준다
-        if (Number(localStorage.getItem(VERSION_KEY) ?? 1) < VERSION) {
+        const saved = Number(localStorage.getItem(VERSION_KEY) ?? 1);
+        if (saved < VERSION) {
           const have = new Set(b.map((q) => q.id));
-          b = [...b, ...DEFAULT_BANK.filter((q) => q.unit > 4 && !have.has(q.id))];
+          // 저장한 뒤에 새로 생긴 과목의 문제만 덧붙인다(직접 지운 예전 문제가 되살아나지 않게)
+          const since = saved < 2 ? 4 : 22;
+          b = [...b, ...DEFAULT_BANK.filter((q) => q.unit > since && !have.has(q.id))];
           localStorage.setItem(KEY, JSON.stringify(b));
           localStorage.setItem(VERSION_KEY, String(VERSION));
         }
@@ -38,11 +41,13 @@ const blank = (): BankQ => ({ id: `my${Date.now().toString(36)}`, unit: 3, level
 export function BankEditor({ onClose }: { onClose: () => void }) {
   const [bank, setBank] = useState<BankQ[]>(loadBank);
   const [unit, setUnit] = useState(0);
+  const [subj, setSubj] = useState('');
   const [level, setLevel] = useState<QLevel | ''>('');
   const [edit, setEdit] = useState<BankQ | null>(null);
   const [msg, setMsg] = useState('');
   const file = useRef<HTMLInputElement>(null);
-  const shown = useMemo(() => bank.filter((q) => (!unit || q.unit === unit) && (!level || q.level === level)), [bank, unit, level]);
+  const subjUnits = SUBJECTS.find((x) => x.id === subj)?.units;
+  const shown = useMemo(() => bank.filter((q) => (!subjUnits || subjUnits.includes(q.unit)) && (!unit || q.unit === unit) && (!level || q.level === level)), [bank, unit, level, subj]);
 
   const save = (next: BankQ[], note: string) => {
     setBank(next);
@@ -77,7 +82,7 @@ export function BankEditor({ onClose }: { onClose: () => void }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="font-display text-2xl">문제은행 <span className="text-base opacity-60">{bank.length}문제</span></h2>
-            <div className="text-sm opacity-70">물질과 에너지 · 과학탐구실험1·2. 출제할 때 보기 순서는 자동으로 섞여요.</div>
+            <div className="text-sm opacity-70">7개 과목. 출제할 때 보기 순서는 자동으로 섞여요.</div>
           </div>
           <button className="btn-ghost !py-2 !text-base" onClick={onClose}>닫기</button>
         </div>
@@ -85,7 +90,12 @@ export function BankEditor({ onClose }: { onClose: () => void }) {
         {edit ? (
           <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
             <div className="flex flex-wrap gap-2">
-              {ALL_UNITS.map((u) => (
+              <select aria-label="과목" className="rounded-full border-2 border-ink/10 bg-white px-3 py-1 font-display text-sm"
+                value={SUBJECTS.find((x) => x.units.includes(edit.unit))?.id ?? 'chem'}
+                onChange={(e) => setEdit({ ...edit, unit: SUBJECTS.find((x) => x.id === e.target.value)!.units[0] })}>
+                {SUBJECTS.map((sb) => <option key={sb.id} value={sb.id}>{sb.name}</option>)}
+              </select>
+              {(SUBJECTS.find((x) => x.units.includes(edit.unit))?.units ?? []).map((u) => (
                 <button key={u} className={`chip ${edit.unit === u ? '!bg-grape !text-white' : ''}`} onClick={() => setEdit({ ...edit, unit: u })}>{UNIT_SHORT[u]}</button>
               ))}
               <span className="w-full" />
@@ -114,8 +124,12 @@ export function BankEditor({ onClose }: { onClose: () => void }) {
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2">
-              <button className={`chip ${unit === 0 ? '!bg-grape !text-white' : ''}`} onClick={() => setUnit(0)}>전체</button>
-              {SUBJECTS.flatMap((sb) => sb.units).map((u) => <button key={u} title={UNIT_LABEL[u]} className={`chip ${unit === u ? '!bg-grape !text-white' : ''}`} onClick={() => setUnit(u)}>{UNIT_SHORT[u]}</button>)}
+              <select aria-label="과목" className="rounded-full border-2 border-ink/10 bg-white px-3 py-1 font-display text-sm" value={subj}
+                onChange={(e) => { setSubj(e.target.value); setUnit(0); }}>
+                <option value="">전체 과목</option>
+                {SUBJECTS.map((sb) => <option key={sb.id} value={sb.id}>{sb.name}</option>)}
+              </select>
+              {(SUBJECTS.find((x) => x.id === subj)?.units ?? []).map((u) => <button key={u} title={UNIT_LABEL[u]} className={`chip ${unit === u ? '!bg-grape !text-white' : ''}`} onClick={() => setUnit(unit === u ? 0 : u)}>{UNIT_SHORT[u]}</button>)}
               <span className="opacity-30">|</span>
               <button className={`chip ${level === '' ? '!bg-bubble !text-white' : ''}`} onClick={() => setLevel('')}>전체 난이도</button>
               {LEVELS.map((l) => <button key={l} className={`chip ${level === l ? '!bg-bubble !text-white' : ''}`} onClick={() => setLevel(l)}>{LEVEL_LABEL[l]}</button>)}

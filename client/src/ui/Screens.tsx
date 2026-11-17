@@ -7,7 +7,7 @@ import { Blob } from './Overlays';
 
 const MODES: { id: GameMode; title: string; sub: string; emoji: string; ready: boolean }[] = [
   { id: 'play', title: '순수 놀이 모드', sub: '달리고 점프하고 피하는 3D 파티 게임', emoji: '🎈', ready: true },
-  { id: 'chem', title: '교과 퀴즈 모드', sub: '물질과 에너지 3·4단원 · 과학탐구실험1·2 개념 퀴즈가 섞여 나와요', emoji: '⚗️', ready: true },
+  { id: 'chem', title: '교과 퀴즈 모드', sub: '물질과 에너지 · 과학탐구실험 · 세계시민과 지리 · 한국사 · 언어생활과 한자', emoji: '⚗️', ready: true },
 ];
 
 function Shell({ children, back }: { children: React.ReactNode; back?: () => void }) {
@@ -110,7 +110,7 @@ export function HostSetup() {
         {mode === 'chem' && (
           <section>
             <div className="mb-2 font-display text-lg">과목과 출제 범위</div>
-            <div className="mb-2 grid gap-2 sm:grid-cols-3">
+            <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {SUBJECTS.map((sb) => (
                 <button key={sb.id} onClick={() => setUnits(sb.units)}
                   className={`rounded-2xl border-4 p-2 text-left ${subject?.id === sb.id ? 'border-grape bg-grape/10' : 'border-ink/10 bg-white'}`}>

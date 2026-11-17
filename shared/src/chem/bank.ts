@@ -1,25 +1,46 @@
+import { SOCIAL_BANK } from './bank-social';
+
 /**
  * 문제은행
  * - 물질과 에너지: 3단원(화학 변화의 자발성), 4단원(반응 속도)
  * - 과학탐구실험1: 과학의 본성과 역사 속의 과학 탐구, 과학 탐구의 과정과 절차
  * - 과학탐구실험2: 생활 속의 과학 탐구, 미래 사회와 첨단 과학 탐구
+ * - 세계시민과 지리, 한국사1·2, 언어생활과 한자: bank-social.ts
  */
 export type QLevel = 'easy' | 'normal' | 'hard';
 export const LEVEL_LABEL: Record<QLevel, string> = { easy: '쉬움', normal: '보통', hard: '어려움' };
 
-/** 단원 번호: 물질과 에너지는 3, 4. 과학탐구실험1은 11, 12. 과학탐구실험2는 21, 22. */
+/**
+ * 단원 번호: 물질과 에너지 3, 4 / 과학탐구실험1 11, 12 / 과학탐구실험2 21, 22 /
+ * 세계시민과 지리 31~34 / 한국사1 41~43 / 한국사2 51~53 / 언어생활과 한자 61~63
+ */
 export const UNIT_LABEL: Record<number, string> = {
   3: '3단원 화학 변화의 자발성', 4: '4단원 반응 속도',
   11: '과학의 본성과 역사 속의 과학 탐구', 12: '과학 탐구의 과정과 절차',
   21: '생활 속의 과학 탐구', 22: '미래 사회와 첨단 과학 탐구',
+  31: '세계시민, 세계화와 지역 이해', 32: '모자이크 세계, 세계의 다양한 자연환경과 문화',
+  33: '네트워크 세계, 세계의 인구와 경제 공간', 34: '지속가능한 세계, 세계의 환경 문제와 평화',
+  41: '근대 이전 한국사의 이해', 42: '근대 이전 한국사의 탐구', 43: '근대 국가 수립의 노력',
+  51: '일제 식민 통치와 민족운동', 52: '대한민국의 발전', 53: '오늘날의 대한민국',
+  61: '한자의 짜임과 기초', 62: '일상 속 한자 어휘와 성어', 63: '여러 분야의 한자 어휘',
 };
-export const UNIT_SHORT: Record<number, string> = { 3: '3단원', 4: '4단원', 11: '과학의 본성·역사', 12: '탐구 과정', 21: '생활 속 과학', 22: '미래·첨단 과학' };
-export const ALL_UNITS = [3, 4, 11, 12, 21, 22];
+export const UNIT_SHORT: Record<number, string> = {
+  3: '3단원', 4: '4단원', 11: '과학의 본성·역사', 12: '탐구 과정', 21: '생활 속 과학', 22: '미래·첨단 과학',
+  31: '세계화와 지역', 32: '자연환경과 문화', 33: '인구와 경제', 34: '환경과 평화',
+  41: '근대 이전 이해', 42: '근대 이전 탐구', 43: '근대 국가 수립',
+  51: '일제 강점기', 52: '대한민국의 발전', 53: '오늘날의 대한민국',
+  61: '한자의 짜임', 62: '어휘와 성어', 63: '분야별 어휘',
+};
+export const ALL_UNITS = [3, 4, 11, 12, 21, 22, 31, 32, 33, 34, 41, 42, 43, 51, 52, 53, 61, 62, 63];
 /** 과목: 방을 만들 때 과목을 고르면 그 과목의 단원이 출제 범위가 된다 */
 export const SUBJECTS = [
   { id: 'chem', name: '물질과 에너지', sub: '3·4단원', emoji: '⚗️', units: [3, 4] },
   { id: 'lab1', name: '과학탐구실험1', sub: '과학의 본성 · 탐구 과정', emoji: '🔬', units: [11, 12] },
   { id: 'lab2', name: '과학탐구실험2', sub: '생활 속 과학 · 미래 과학', emoji: '🧪', units: [21, 22] },
+  { id: 'geo', name: '세계시민과 지리', sub: '세계화 · 문화 · 경제 · 환경', emoji: '🌏', units: [31, 32, 33, 34] },
+  { id: 'hist1', name: '한국사1', sub: '근대 이전 ~ 근대 국가 수립', emoji: '📜', units: [41, 42, 43] },
+  { id: 'hist2', name: '한국사2', sub: '일제 강점기 ~ 오늘날', emoji: '🏛️', units: [51, 52, 53] },
+  { id: 'hanja', name: '언어생활과 한자', sub: '한자의 짜임 · 성어 · 교과 용어', emoji: '✍️', units: [61, 62, 63] },
 ];
 export const subjectOf = (units: number[]) => SUBJECTS.find((x) => units.length > 0 && units.every((u) => x.units.includes(u)));
 
@@ -39,7 +60,7 @@ export interface BankQ {
 const q = (id: string, unit: number, level: QLevel, text: string, options: string[], explain: string): BankQ =>
   ({ id, unit, level, text, options, answer: 0, explain });
 
-export const DEFAULT_BANK: BankQ[] = [
+const CORE_BANK: BankQ[] = [
   // ───────── 3단원: 화학 변화의 자발성 ─────────
   q('3e1', 3, 'easy', '발열 반응에서 반응 엔탈피(ΔH)의 부호는?', ['ΔH < 0', 'ΔH > 0', 'ΔH = 0', '부호를 정할 수 없다'],
     '발열 반응은 열을 내보내서 생성물의 엔탈피가 반응물보다 작다. 그래서 ΔH < 0이다.'),
@@ -236,6 +257,8 @@ export const DEFAULT_BANK: BankQ[] = [
   q('22h3', 22, 'hard', '과학기술을 개발할 때 "지속가능성"을 고려한다는 것은 무슨 뜻일까?', ['지금의 필요를 채우면서 미래 세대의 환경과 자원도 지키는 것', '가장 빠르게 개발하는 것', '비용만 가장 적게 드는 것', '현재 세대의 이익만 가장 크게 하는 것'],
     '지속가능한 발전은 미래 세대가 쓸 환경과 자원을 해치지 않으면서 현재의 필요를 채우는 것이다.'),
 ];
+
+export const DEFAULT_BANK: BankQ[] = [...CORE_BANK, ...SOCIAL_BANK];
 
 /** 클라이언트에 미리 보내는 문제(정답 없음). 정답과 해설은 채점하는 순간에 따로 보낸다. */
 export interface PublicQ { text: string; options: string[]; unit: number; level: QLevel }

@@ -406,7 +406,9 @@ function useDiag() {
   useTicker(1);
   const n = net.netStats();
   const fps = Math.round((window as unknown as { __cp40fps?: number }).__cp40fps ?? 0);
-  const netBad = n.rtt > 220 || n.jitter > 90, netSoso = n.rtt > 130 || n.jitter > 45;
+  // 화면이 느리면 패킷을 늦게 읽어서 흔들림이 크게 재진다. 프레임이 넉넉할 때만 흔들림을 네트워크 탓으로 본다.
+  const smooth = fps >= 50;
+  const netBad = n.rtt > 220 || (smooth && n.jitter > 90), netSoso = n.rtt > 130 || (smooth && n.jitter > 45);
   const serverBad = n.serverLate > 25 || n.serverTickMs > 10;
   const deviceBad = fps > 0 && fps < 40;
   // 화면이 느리면 패킷을 늦게 읽어서 네트워크 흔들림도 크게 재진다. 그래서 기기가 느릴 때는 기기를 먼저 짚는다.
@@ -428,7 +430,8 @@ export function SettingsButton({ host = false }: { host?: boolean }) {
       <button className={`chip ${d.worst ? '!bg-lemon' : ''}`} onClick={() => setOpen(!open)} aria-label="설정">
         ⚙ {muted ? '🔇' : '🔊'} <span className={d.netBad ? 'text-bubble' : d.netSoso ? 'text-[#e67700]' : 'text-[#2f9e44]'}>●</span> {d.rtt}ms
       </button>
-      {d.worst && !open && <div className="chip mt-1 !bg-lemon !text-xs">{d.worst}</div>}
+      {/* 교사 화면(프로젝터)에는 서버 문제만 띄운다. 네트워크·기기 경고는 학생이 볼 일이다. */}
+      {d.worst && !open && (!host || d.serverBad) && <div className="chip mt-1 !bg-lemon !text-xs">{d.worst}</div>}
       {open && (
         <div className="card absolute bottom-10 left-1/2 flex w-max -translate-x-1/2 flex-col gap-2 !p-3 sm:bottom-auto sm:left-auto sm:right-0 sm:top-10 sm:translate-x-0">
           <div className="flex items-center gap-2">
