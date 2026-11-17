@@ -401,17 +401,33 @@ export function FinalOverlay({ room, myId, children }: { room: RoomState; myId: 
   );
 }
 
+/** 끊김의 원인을 짚어 주는 진단: 네트워크(핑·흔들림), 서버(늦은 틱), 기기(프레임) 중 어디가 느린지 보여 준다. */
+function useDiag() {
+  useTicker(1);
+  const n = net.netStats();
+  const fps = Math.round((window as unknown as { __cp40fps?: number }).__cp40fps ?? 0);
+  const netBad = n.rtt > 220 || n.jitter > 90, netSoso = n.rtt > 130 || n.jitter > 45;
+  const serverBad = n.serverLate > 25 || n.serverTickMs > 10;
+  const deviceBad = fps > 0 && fps < 40;
+  const worst = serverBad ? '🖥 서버가 버거워해요' : netBad ? '📶 네트워크가 불안정해요' : deviceBad ? '📱 기기가 느려요' : null;
+  return { ...n, fps, netBad, netSoso, serverBad, deviceBad, worst };
+}
+
 export function SettingsButton({ host = false }: { host?: boolean }) {
   const quality = useStore((s) => s.quality);
   useStore((s) => s.soundTick);
   const studentSound = useStore((s) => s.room?.config.studentSound !== false);
   const [open, setOpen] = useState(false);
+  const d = useDiag();
   const label: Record<Quality, string> = { low: '낮음', medium: '보통', high: '높음' };
   const muted = !soundPrefs.sfx || (!host && !studentSound);
   const full = typeof document !== 'undefined' && !!document.documentElement.requestFullscreen;
   return (
     <div className="absolute bottom-3 left-1/2 z-30 -translate-x-1/2 sm:bottom-auto sm:left-auto sm:right-3 sm:top-14 sm:translate-x-0">
-      <button className="chip" onClick={() => setOpen(!open)} aria-label="설정">⚙ {muted ? '🔇' : '🔊'} 화질 {label[quality]}</button>
+      <button className={`chip ${d.worst ? '!bg-lemon' : ''}`} onClick={() => setOpen(!open)} aria-label="설정">
+        ⚙ {muted ? '🔇' : '🔊'} <span className={d.netBad ? 'text-bubble' : d.netSoso ? 'text-[#e67700]' : 'text-[#2f9e44]'}>●</span> {d.rtt}ms
+      </button>
+      {d.worst && !open && <div className="chip mt-1 !bg-lemon !text-xs">{d.worst}</div>}
       {open && (
         <div className="card absolute bottom-10 left-1/2 flex w-max -translate-x-1/2 flex-col gap-2 !p-3 sm:bottom-auto sm:left-auto sm:right-0 sm:top-10 sm:translate-x-0">
           <div className="flex items-center gap-2">
@@ -426,6 +442,13 @@ export function SettingsButton({ host = false }: { host?: boolean }) {
             {host && <button className={`chip ${soundPrefs.music ? '!bg-mint' : ''}`} onClick={() => setMusicPref(!soundPrefs.music)}>{soundPrefs.music ? '🎵 음악 켜짐' : '음악 꺼짐'}</button>}
           </div>
           {!host && !studentSound && <div className="text-xs opacity-70">선생님이 학생 기기 소리를 꺼 두었어요.</div>}
+          {/* 끊길 때 어디가 원인인지 보는 곳 */}
+          <div className="rounded-xl bg-cream p-2 text-xs leading-relaxed tabular-nums">
+            <div className={d.netBad ? 'font-bold text-bubble' : ''}>📶 네트워크: 핑 {d.rtt}ms · 흔들림 {d.jitter}ms {d.netBad ? '(불안정)' : d.netSoso ? '(보통)' : '(좋음)'}</div>
+            <div className={d.serverBad ? 'font-bold text-bubble' : ''}>🖥 서버: 처리 {d.serverTickMs}ms · 최근 5초 지각 {d.serverLate}번 {d.serverBad ? '(버거움)' : '(여유)'}</div>
+            <div className={d.deviceBad ? 'font-bold text-bubble' : ''}>📱 화면: {d.fps}fps · 화질 {label[quality]} {d.deviceBad ? '(느림)' : ''}</div>
+            <div className="opacity-60">다른 친구 표시 지연 {d.delay}ms(흔들림에 맞춰 자동 조절)</div>
+          </div>
           {full && (
             <button className="chip self-start" onClick={() => { (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {}); setOpen(false); }}>⛶ 전체 화면</button>
           )}

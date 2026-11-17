@@ -17,7 +17,7 @@ const maxDpr = (q: string) => (q === 'low' ? 1 : q === 'medium' ? Math.min(1.5, 
 /** 네트워크·예측 갱신, 카메라, 자동 화질 조절을 한 프레임에 처리한다. */
 function Driver({ spectator }: { spectator: boolean }) {
   const camera = useThree((s) => s.camera);
-  const fps = useRef({ frames: 0, t: 0, low: 0, slow: 0, good: 0 });
+  const fps = useRef({ frames: 0, t: 0, low: 0, slow: 0, good: 0, ceil: 9, raised: false });
   const first = useRef(true);
   const levelKey = useStore((s) => s.room?.levelKey);
   useEffect(() => { first.current = true; }, [levelKey]);
@@ -79,14 +79,18 @@ function Driver({ spectator }: { spectator: boolean }) {
       const st = useStore.getState();
       if (document.visibilityState === 'visible') {
         const dpr = state.viewport.dpr, max = maxDpr(st.quality), min = Math.min(max, 0.75);
-        if (v < 55 || slowRatio > 0.25) {
+        if (v < 54 || slowRatio > 0.3) {
           f.good = 0;
-          if (dpr > min + 0.01) state.setDpr(Math.max(min, dpr * (v < 40 ? 0.8 : 0.9)));
-          else if (st.autoQuality && st.quality !== 'low' && ++f.low >= 3) { setQuality(st.quality === 'high' ? 'medium' : 'low', false); f.low = 0; }
+          if (dpr > min + 0.01) {
+            // 방금 올렸다가 다시 내려야 한다면 그 높이는 이 기기에 무리다 → 다시는 그만큼 올리지 않는다
+            if (f.raised) { f.ceil = Math.min(f.ceil, dpr * 0.93); f.raised = false; }
+            state.setDpr(Math.max(min, dpr * (v < 40 ? 0.8 : 0.9)));
+          } else if (st.autoQuality && st.quality !== 'low' && ++f.low >= 3) { setQuality(st.quality === 'high' ? 'medium' : 'low', false); f.low = 0; }
         } else {
-          f.low = 0;
-          // 4초 동안 안정적이면 해상도를 한 칸 되돌린다
-          if (++f.good >= 4 && dpr < max - 0.01) { state.setDpr(Math.min(max, dpr * 1.08)); f.good = 2; }
+          f.low = 0; f.raised = false;
+          // 해상도를 바꾸면 그 순간 한 번 끊기므로 올리는 일은 드물게 한다: 10초 동안 안정적일 때만, 확인된 한도 안에서
+          const top = Math.min(max, f.ceil);
+          if (++f.good >= 10 && dpr < top - 0.04) { state.setDpr(Math.min(top, dpr * 1.1)); f.good = 0; f.raised = true; }
         }
       }
     }

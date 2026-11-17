@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Server } from 'socket.io';
-import { DT, TICK_RATE, type CreateReq, type CreateRes, type HostCmd, type InputMsg, type JoinReq, type JoinRes } from '@shared';
+import { DT, TICK_RATE, type CreateReq, type CreateRes, type HostCmd, type JoinReq, type JoinRes } from '@shared';
 import { metrics, recordTick, tickStats } from './metrics';
 import { Room } from './room';
 
@@ -28,6 +28,8 @@ const io = new Server(http, {
 });
 
 const rooms = new Map<string, Room>();
+const lateTimes: number[] = []; // 늦게 시작한 틱의 시각(서버가 버거운지 판단하는 용도)
+let recentTickMs = 0;
 
 function newCode(): string {
   for (;;) {
@@ -54,6 +56,7 @@ app.get('/api/metrics', (_req, res) => {
     rooms: rooms.size, players, sockets: io.engine.clientsCount,
     tick: tickStats(), ticks: metrics.ticks, lateTicks: metrics.lateTicks,
     bytesOut: metrics.bytesOut, snapshots: metrics.snapshots,
+    inputs: metrics.inputs, guessed: metrics.guessed, dropped: metrics.dropped, idle: metrics.idle,
     cpuMs: (cpu.user + cpu.system) / 1000, rssMb: mem.rss / 1048576, heapMb: mem.heapUsed / 1048576,
     uptime: process.uptime(),
   });
@@ -116,7 +119,7 @@ io.on('connection', (socket) => {
     ack(room.join(socket, req));
   });
 
-  socket.on('in', (msg: InputMsg) => {
+  socket.on('in', (msg: number[]) => {
     const id = socket.data.playerId as number | undefined;
     if (id !== undefined) roomOf()?.onInput(id, msg);
   });
@@ -127,8 +130,12 @@ io.on('connection', (socket) => {
   });
 
   // 지연 측정 + 시계 동기화용
-  socket.on('pg', (t: number, ack: (t: number, tick: number) => void) => {
-    if (typeof ack === 'function') ack(t, roomOf()?.tick ?? 0);
+  // 지연 측정 + 서버 상태: 최근 5초 동안 늦게 돈 틱 수와 틱 처리 시간을 함께 알려 준다
+  socket.on('pg', (t: number, ack: (t: number, tick: number, late: number, tickMs: number) => void) => {
+    if (typeof ack !== 'function') return;
+    const now = performance.now();
+    while (lateTimes.length && now - lateTimes[0] > 5000) lateTimes.shift();
+    ack(t, roomOf()?.tick ?? 0, lateTimes.length, recentTickMs);
   });
 
   socket.on('disconnect', () => {
@@ -144,7 +151,7 @@ const stepMs = DT * 1000;
 let next = performance.now() + stepMs;
 function loop() {
   const now = performance.now();
-  if (now - next > stepMs * 0.6) metrics.lateTicks++;
+  if (now - next > stepMs * 0.6) { metrics.lateTicks++; lateTimes.push(now); if (lateTimes.length > 600) lateTimes.shift(); }
   let guard = 0;
   while (now >= next && guard++ < 5) {
     const t0 = performance.now();
@@ -155,7 +162,9 @@ function loop() {
         if (++room.faults >= 3) { try { room.recover(); } catch (e2) { console.error('복구 실패, 방을 닫습니다:', e2); rooms.delete(room.code); } }
       }
     }
-    recordTick(performance.now() - t0);
+    const took = performance.now() - t0;
+    recentTickMs += (took - recentTickMs) * 0.02;
+    recordTick(took);
     next += stepMs;
   }
   if (now - next > 500) next = now + stepMs; // 크게 밀리면 따라잡지 않고 재설정

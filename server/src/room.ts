@@ -16,9 +16,14 @@ const COUNTDOWN_TICKS = sec(COUNTDOWN_SEC);
 const RESULT_TICKS = sec(12);
 const GRAB_MAX = Math.round(2.5 * TICK_RATE);
 const GRAB_COOLDOWN = Math.round(1.5 * TICK_RATE);
-const MAX_QUEUE = Math.round(0.25 * TICK_RATE); // 입력을 최대 0.25초치까지 쌓아 둔다
-const STARVE_TICKS = Math.round(0.27 * TICK_RATE);
-const MAX_TOKENS = Math.round(0.13 * TICK_RATE);
+// 무선 네트워크는 0.2~0.5초씩 멈췄다가 밀린 입력을 한꺼번에 보내는 일이 흔하다.
+// 그 묶음을 버리거나 쌓아 두면 화면이 되돌아가거나 계속 굼떠지므로, 0.75초치까지는 받아서 바로 따라잡는다.
+const MAX_QUEUE = Math.round(0.75 * TICK_RATE);
+const STARVE_TICKS = Math.round(0.75 * TICK_RATE); // 이만큼 입력이 없으면 그제서야 조작 없이 물리만 진행한다
+const MAX_TOKENS = Math.round(0.75 * TICK_RATE); // 멈춰 있던 동안 못 쓴 걸음 수(이만큼은 한꺼번에 따라잡을 수 있다)
+const LATE_MAX = Math.round(0.3 * TICK_RATE);
+const CUSHION = 2; // 입력이 이보다 많이 밀려 있으면 따라잡기 시작한다
+const GUESS_TICKS = Math.round(0.1 * TICK_RATE); // 늦는 입력을 직전 입력으로 어림해 주는 최대 시간(0.1초)
 
 class Player implements GamePlayer {
   socket: Socket | null = null;
@@ -29,6 +34,8 @@ class Player implements GamePlayer {
   lastSeq = 0;
   starve = 0; // 입력이 안 온 연속 틱
   tokens = 2;
+  resyncUntil = 0;
+  guessed = 0; // 어림해서 미리 처리한 걸음 수
   active = true;
   done = false;
   out = false;
@@ -136,6 +143,7 @@ export class Room {
     }
     p.socket = socket;
     p.lastSeq = 0; // 새로 접속한 클라이언트는 입력 번호를 1부터 다시 센다
+    p.guessed = 0;
     p.queue.length = 0;
     p.input = { ...NO_INPUT };
     p.starve = 0;
@@ -161,11 +169,18 @@ export class Room {
     this.dirty = true;
   }
 
-  onInput(id: number, msg: InputMsg) {
+  /** 입력 받기. 클라이언트는 입력 여러 개를 한 메시지에 이어 붙여 보낸다: [seq, mx, mz, 버튼, seq, mx, mz, 버튼, ...] */
+  onInput(id: number, msg: number[]) {
     const p = this.players.get(id);
-    if (!p || !Array.isArray(msg) || msg.length < 4) return;
-    if (p.queue.length >= MAX_QUEUE) p.queue.shift(); // 밀린 입력은 오래된 것부터 버린다
-    p.queue.push(msg);
+    if (!p || !Array.isArray(msg) || msg.length < 4 || msg.length > 4 * 64) return;
+    // 0.75초 넘게 끊겼다 돌아온 경우: 서버는 이미 그 시간만큼 물리를 진행했으므로 밀린 옛 입력은 버리고
+    // 가장 최근 것만 받는다(안 그러면 계속 과거 입력을 처리하느라 조작이 굼떠진다).
+    if (p.starve > STARVE_TICKS) p.resyncUntil = this.tick + Math.round(0.25 * TICK_RATE);
+    const cap = this.tick < p.resyncUntil ? 4 : MAX_QUEUE;
+    for (let i = 0; i + 3 < msg.length; i += 4) {
+      while (p.queue.length >= cap) p.queue.shift(); // 넘치면 오래된 것부터 버린다
+      p.queue.push([msg[i], msg[i + 1], msg[i + 2], msg[i + 3]]);
+    }
   }
 
   setColor(id: number, color: string) {
@@ -355,27 +370,51 @@ export class Room {
     for (const p of this.players.values()) {
       if (!p.connected || !p.active || p.out) continue;
       // 입력 한 개 = 물리 한 걸음. 클라이언트 예측과 걸음 수가 정확히 맞아야 보정이 줄어든다.
-      // 토큰 버킷으로 틱당 평균 1개(순간 최대 0.13초치)만 허용해 입력을 몰아 보내는 속도 조작을 막는다.
+      // 걸음 수는 토큰으로 센다: 틱마다 1개씩 쌓이고 입력 하나에 1개를 쓴다. 긴 시간으로 보면 틱당 1걸음을
+      // 넘을 수 없어 속도 조작이 안 되고, 네트워크가 잠깐 멈췄다 몰려온 입력은 쌓인 토큰으로 바로 따라잡는다.
       const can = this.canMove(p);
+      const slow = p.grabbing !== null || p.held;
       p.tokens = Math.min(MAX_TOKENS, p.tokens + 1);
-      let stepped = false;
-      while (p.tokens >= 1 && p.queue.length > 0) {
+      // 이미 어림해서 처리한 번호의 입력(아래 참고)은 버린다
+      let dropped = 0;
+      while (p.queue.length > 0 && (p.queue[0][0] | 0) <= p.lastSeq && p.guessed > 0) { p.queue.shift(); p.guessed--; dropped++; metrics.dropped++; }
+      // 따라잡을 토큰이 없는데도 입력이 0.3초치 넘게 밀려 있다면, 이 기기는 서버보다 빠르게 입력을 보내고 있는 것이다
+      // (시계 차이나 속도 조작). 계속 쌓이면 조작이 점점 늦게 먹으므로 오래된 것을 버리고 최근 0.1초치만 남긴다.
+      if (p.tokens < 2 && p.queue.length > LATE_MAX) { metrics.dropped += p.queue.length - GUESS_TICKS; p.queue.splice(0, p.queue.length - GUESS_TICKS); }
+      // 평소에는 틱당 1걸음. 밀린 입력이 쌓여 있으면 2걸음씩 처리해 부드럽게 따라잡는다
+      // (한꺼번에 처리하면 다른 사람 화면에서 순간이동처럼 보인다).
+      let budget = p.queue.length > CUSHION ? 2 : 1;
+      let steps = 0;
+      while (budget-- > 0 && p.tokens >= 1 && p.queue.length > 0) {
         const m = p.queue.shift()!;
         p.tokens--;
         p.lastSeq = m[0] | 0;
+        p.guessed = 0;
         p.input.mx = Math.max(-127, Math.min(127, m[1] | 0)) / 127;
         p.input.mz = Math.max(-127, Math.min(127, m[2] | 0)) / 127;
         p.input.jump = (m[3] & 1) !== 0;
         p.input.action = (m[3] & 2) !== 0;
         p.input.grab = (m[3] & 4) !== 0;
-        sim.stepPlayer(p.state, p.input, p.id, can, p.grabbing !== null || p.held);
-        stepped = true;
+        sim.stepPlayer(p.state, p.input, p.id, can, slow);
+        steps++;
+        metrics.inputs++;
       }
-      if (stepped) p.starve = 0;
-      else if (++p.starve > STARVE_TICKS) {
-        // 입력이 0.3초 넘게 끊기면 조작 없이 물리만 진행한다(공중에 멈춰 있지 않게)
-        p.input.mx = 0; p.input.mz = 0; p.input.jump = false; p.input.action = false;
-        sim.stepPlayer(p.state, p.input, p.id, can, p.grabbing !== null || p.held);
+      if (steps > 0) p.starve = 0;
+      else if (dropped > 0) {
+        // 미리 처리해 둔 걸음의 진짜 입력이 이제 도착했다: 그만큼은 이미 움직였으므로 이번 틱은 쉰다.
+        // (여기서 또 어림하면 진짜 입력을 영영 따라잡지 못한다)
+        p.starve = 0;
+      } else if (p.tokens >= 1 && p.lastSeq > 0 && p.guessed < GUESS_TICKS && p.starve <= GUESS_TICKS) {
+        // 입력이 조금 늦는 중(흔한 흔들림): 직전 입력이 이어진다고 보고 한 걸음 미리 처리한다.
+        // 그 번호의 진짜 입력이 나중에 오면 버린다. 덕분에 다른 사람 화면에서 캐릭터가 멈칫거리지 않는다.
+        p.tokens--; p.lastSeq++; p.guessed++; p.starve++;
+        metrics.guessed++;
+        sim.stepPlayer(p.state, p.input, p.id, can, slow);
+      } else if ((metrics.idle++, ++p.starve) > STARVE_TICKS) {
+        // 입력이 0.75초 넘게 끊겼다: 조작 없이 물리만 진행한다. 쌓인 토큰은 버려서 나중에 두 번 움직이지 않게 한다.
+        p.tokens = 0; p.guessed = 0;
+        p.input.mx = 0; p.input.mz = 0; p.input.jump = false; p.input.action = false; p.input.grab = false;
+        sim.stepPlayer(p.state, p.input, p.id, can, slow);
       }
     }
     this.updateGrabs();

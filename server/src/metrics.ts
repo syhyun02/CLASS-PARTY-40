@@ -5,6 +5,8 @@ export const metrics = {
   tickMs: [] as number[], // 최근 틱 처리 시간
   lateTicks: 0, // 예정보다 10ms 넘게 늦게 시작한 틱
   ticks: 0,
+  // 입력 처리 통계: 실제로 처리한 입력, 어림해서 미리 처리한 걸음, 그 때문에 버린 입력, 입력 없이 쉰 틱
+  inputs: 0, guessed: 0, dropped: 0, idle: 0,
 };
 
 export function recordTick(ms: number) {

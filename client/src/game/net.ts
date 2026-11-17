@@ -17,7 +17,11 @@ export interface RenderPlayer {
 interface Snap { tick: number; players: Map<number, SnapPlayer> }
 interface Pending { seq: number; input: PlayerInput; canMove: boolean; slow: boolean }
 
-const INTERP_DELAY = (SNAPSHOT_EVERY + 2) * 1.0; // 틱. 스냅샷 간격보다 조금 길게(약 83ms) 잡아 끊김을 줄인다
+// 다른 캐릭터는 조금 과거를 그린다. 그 '조금'을 네트워크 흔들림에 맞춰 자동으로 늘리고 줄인다.
+const MIN_DELAY = SNAPSHOT_EVERY + 2; // 틱(약 83ms): 흔들림이 없을 때
+const MAX_DELAY = Math.round(0.35 * TICK_RATE); // 틱(350ms): 이보다 오래 끊기면 예측 이동으로 버틴다
+const MAX_EXTRAPOLATE = Math.round(0.25 * TICK_RATE); // 새 소식이 없을 때 가던 방향으로 계속 그려 주는 최대 시간
+const INPUT_BATCH = 2; // 입력 2개를 한 번에 보낸다(초당 30번). 패킷 수를 절반으로 줄인다
 const MAX_PENDING = Math.round(1.5 * TICK_RATE);
 
 // 물리 엔진(약 2MB)은 입장할 때 내려받는다. 첫 화면이 빨리 뜨도록 미리 묶지 않는다.
@@ -42,6 +46,13 @@ class GameNet {
   private snaps: Snap[] = [];
   private tickOffset = -Infinity; // 서버 틱 - 내 시계(틱 단위)
   private offsetSamples: number[] = [];
+  private jitter = 0; // 스냅샷 도착 시각의 흔들림(틱)
+  private delay = MIN_DELAY; // 지금 쓰는 보간 지연(틱)
+  private smooth = new Map<number, { x: number; y: number; z: number; yaw: number }>();
+  private lastRender = 0;
+  private outbox: number[] = [];
+  serverLate = 0;
+  serverTickMs = 0;
 
   // 예측 상태
   private me: PlayerState | null = null;
@@ -87,8 +98,13 @@ class GameNet {
     setInterval(() => {
       if (!s.connected) return;
       const t0 = performance.now();
-      s.emit('pg', t0, () => { this.rtt = this.rtt ? this.rtt * 0.7 + (performance.now() - t0) * 0.3 : performance.now() - t0; });
-    }, 2000);
+      s.emit('pg', t0, (_t: number, _tick: number, late?: number, tickMs?: number) => {
+        const r = performance.now() - t0;
+        this.rtt = this.rtt ? this.rtt * 0.7 + r * 0.3 : r;
+        this.serverLate = late ?? 0;
+        this.serverTickMs = tickMs ?? 0;
+      });
+    }, 1000);
     return s;
   }
 
@@ -198,6 +214,8 @@ class GameNet {
     this.levelTick = r.levelTick;
     useStore.setState({ game: null, mine: { passed: 0, wrong: [], explain: null } });
     this.snaps = [];
+    this.smooth.clear();
+    this.outbox = [];
     this.pending = [];
     this.history.clear();
     this.synced = false;
@@ -230,6 +248,12 @@ class GameNet {
     this.offsetSamples.push(sample);
     if (this.offsetSamples.length > 60) this.offsetSamples.shift();
     const best = Math.max(...this.offsetSamples);
+    // 이 패킷이 가장 빨랐던 패킷보다 얼마나 늦게 왔나(틱) → 최근 최댓값을 천천히 잊으며 기억한다
+    const late = Math.max(0, best - sample);
+    this.jitter = Math.max(this.jitter * 0.985, late);
+    const want = Math.max(MIN_DELAY, Math.min(MAX_DELAY, SNAPSHOT_EVERY + 1.5 + this.jitter * 1.15));
+    // 늘릴 때는 바로, 줄일 때는 천천히(자주 바꾸면 그 자체가 끊김으로 보인다)
+    this.delay += (want - this.delay) * (want > this.delay ? 0.35 : 0.01);
     this.tickOffset = this.tickOffset === -Infinity || Math.abs(best - this.tickOffset) > TICK_RATE / 2 ? best : this.tickOffset + (best - this.tickOffset) * 0.1;
   }
 
@@ -330,7 +354,8 @@ class GameNet {
     const inp: PlayerInput = { mx: mxq / 127, mz: mzq / 127, jump, action };
     const canMove = this.canMoveNow();
     const seq = ++this.seq;
-    this.socket!.emit('in', [seq, mxq, mzq, (jump ? 1 : 0) | (action ? 2 : 0) | (grab ? 4 : 0)]);
+    this.outbox.push(seq, mxq, mzq, (jump ? 1 : 0) | (action ? 2 : 0) | (grab ? 4 : 0));
+    if (this.outbox.length >= INPUT_BATCH * 4) { this.socket!.emit('in', this.outbox); this.outbox = []; }
     this.prev.x = me.x; this.prev.y = me.y; this.prev.z = me.z;
     const vy0 = me.vy, stun0 = me.stun;
     sim.setTick(++this.predTick);
@@ -378,6 +403,12 @@ class GameNet {
     }
   }
 
+  /** 화면의 진단 표시에 쓰는 값: 왕복 지연, 흔들림, 지금 쓰는 보간 지연(ms), 서버가 최근 5초 동안 늦은 틱 수 */
+  netStats() {
+    const ms = 1000 / TICK_RATE;
+    return { rtt: Math.round(this.rtt), jitter: Math.round(this.jitter * ms), delay: Math.round(this.delay * ms), serverLate: this.serverLate, serverTickMs: +this.serverTickMs.toFixed(2) };
+  }
+
   /** 맵의 움직이는 장애물을 그릴 시간(초) */
   levelTime(): number { return Math.max(0, this.obstacleTick) * DT; }
 
@@ -391,7 +422,10 @@ class GameNet {
     const out = this.out;
     let n = 0;
     const myId = useStore.getState().myId;
-    const rt = this.serverTick() - INTERP_DELAY;
+    const now = performance.now();
+    const fdt = Math.min(0.1, this.lastRender ? (now - this.lastRender) / 1000 : 0.016);
+    this.lastRender = now;
+    const rt = this.serverTick() - this.delay;
     const snaps = this.snaps;
     let a: Snap | undefined, b: Snap | undefined;
     for (let i = snaps.length - 1; i >= 0; i--) {
@@ -399,24 +433,39 @@ class GameNet {
     }
     if (!a) { a = snaps[0]; b = snaps[1]; }
     if (a) {
+      // b가 없으면 가장 최근 소식보다 앞을 그려야 하는 상황(패킷이 늦는 중): 직전 속도로 조금 더 가게 한다
+      const prev = b ? undefined : snaps[snaps.length - 2];
+      const over = b ? 0 : Math.min(MAX_EXTRAPOLATE, Math.max(0, rt - a.tick));
       const t = b ? Math.max(0, Math.min(1, (rt - a.tick) / (b.tick - a.tick))) : 0;
       const latest = snaps[snaps.length - 1];
+      const k = Math.min(1, fdt * 22); // 화면 위치를 목표로 부드럽게 끌고 간다(늦게 온 소식으로 튀는 것을 줄인다)
       for (const pa of a.players.values()) {
         const useLocal = pa.id === myId && this.me && this.synced && !((latest.players.get(pa.id)?.flags ?? FLAG_HIDDEN) & FLAG_HIDDEN);
         if (useLocal) continue;
         const pb = b?.players.get(pa.id);
+        let x = pa.x, y = pa.y, z = pa.z, yaw = pa.yaw;
+        if (pb && Math.abs(pb.x - pa.x) + Math.abs(pb.y - pa.y) + Math.abs(pb.z - pa.z) < 12) {
+          x = pa.x + (pb.x - pa.x) * t; y = pa.y + (pb.y - pa.y) * t; z = pa.z + (pb.z - pa.z) * t;
+          let dy = pb.yaw - pa.yaw;
+          if (dy > Math.PI) dy -= Math.PI * 2; else if (dy < -Math.PI) dy += Math.PI * 2;
+          yaw = pa.yaw + dy * t;
+        } else if (pb) {
+          x = pb.x; y = pb.y; z = pb.z; yaw = pb.yaw; // 순간이동(부활)은 보간하지 않는다
+        } else if (over > 0 && prev) {
+          const pp = prev.players.get(pa.id), span = a.tick - prev.tick;
+          if (pp && span > 0 && Math.abs(pa.x - pp.x) + Math.abs(pa.z - pp.z) < 4) {
+            // 멀리 내다볼수록 덜 믿는다(점점 느려지며 멈춘다)
+            const f = (over / span) * (1 - (over / MAX_EXTRAPOLATE) * 0.5);
+            x += (pa.x - pp.x) * f; z += (pa.z - pp.z) * f;
+          }
+        }
         const o = (out[n] ??= { id: 0, x: 0, y: 0, z: 0, yaw: 0, flags: 0, isMe: false });
         n++;
         o.id = pa.id; o.isMe = pa.id === myId; o.flags = pb ? pb.flags : pa.flags;
-        if (pb && Math.abs(pb.x - pa.x) + Math.abs(pb.y - pa.y) + Math.abs(pb.z - pa.z) < 12) {
-          o.x = pa.x + (pb.x - pa.x) * t; o.y = pa.y + (pb.y - pa.y) * t; o.z = pa.z + (pb.z - pa.z) * t;
-          let dy = pb.yaw - pa.yaw;
-          if (dy > Math.PI) dy -= Math.PI * 2; else if (dy < -Math.PI) dy += Math.PI * 2;
-          o.yaw = pa.yaw + dy * t;
-        } else {
-          const p = pb ?? pa; // 순간이동(부활)은 보간하지 않는다
-          o.x = p.x; o.y = p.y; o.z = p.z; o.yaw = p.yaw;
-        }
+        let sm = this.smooth.get(pa.id);
+        if (!sm || Math.abs(x - sm.x) + Math.abs(y - sm.y) + Math.abs(z - sm.z) > 5) { sm = { x, y, z, yaw }; this.smooth.set(pa.id, sm); }
+        else { sm.x += (x - sm.x) * k; sm.y += (y - sm.y) * k; sm.z += (z - sm.z) * k; }
+        o.x = sm.x; o.y = sm.y; o.z = sm.z; o.yaw = yaw;
       }
     }
     // 내 캐릭터는 예측값으로 그린다
