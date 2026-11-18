@@ -9,3 +9,4 @@ export * from './levels/maze';
 export * from './levels/lobby';
 export * from './levels/hover';
 export * from './levels/teamball';
+export * from './levels/paint';

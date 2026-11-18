@@ -126,7 +126,7 @@ const timer = setInterval(() => {
         }
       }
       // 씨름판·꼬리: 판 안에서 돌아다니며 밀치기를 누른다
-      if (room.levelId === 'sumo' || room.levelId === 'tail') {
+      if (room.levelId === 'sumo' || room.levelId === 'tail' || room.levelId === 'paint') {
         const R = room.levelId === 'sumo' ? (lt > 50 ? 3.4 : lt > 28 ? 5.6 : 7.5) : 10;
         const a = lt * (0.5 + (i % 5) * 0.15) + i * 1.3;
         tx = Math.sin(a) * R * (0.3 + (i % 4) * 0.2); tz = Math.cos(a * 1.3) * R * (0.3 + (i % 3) * 0.25);
@@ -180,6 +180,11 @@ const timer = setInterval(() => {
         const ax = bx - dx * (TEAMBALL.ballR + 1.2), az = bz - dz * (TEAMBALL.ballR + 1.2);
         if (Math.hypot(ax - b.x, az - b.z) > 1.3 && i % 3 !== 0) { tx = ax; tz = az; } else { tx = bx + dx * 3; tz = bz + dz * 3; if (Math.hypot(bx - b.x, bz - b.z) < TEAMBALL.ballR + 1.3 && (i + Math.floor(lt * 2)) % 4 === 0) kick = 2; }
       }
+      // 색깔 땅따먹기: 3초마다 새 목표 지점으로 흩어져 달린다(가끔 밀기)
+      if (room.levelId === 'paint') {
+        const k = Math.floor(lt / 3) + i * 13;
+        tx = Math.sin(k * 2.1 + i) * 20; tz = Math.cos(k * 1.7 + i * 0.7) * 20;
+      }
       // 가운데 기둥에서는 떨어져 선다
       if (Math.hypot(tx, tz) < 1.6) { const a = i * 2.4; tx += Math.sin(a) * 1.0; tz += Math.cos(a) * 1.0; }
       let jmp = 0, hold = false;
@@ -196,7 +201,7 @@ const timer = setInterval(() => {
       if (ballJump) jmp = 1;
       const dx = tx - b.x, dz = tz - b.z, dl = Math.hypot(dx, dz);
       const sp = dl > 0.3 ? 1 : 0;
-      const act = kick || ((room.levelId === 'sumo' || room.levelId === 'tail') && Math.sin(lt * 3 + i) > 0.7 ? 2 : 0);
+      const act = kick || ((room.levelId === 'sumo' || room.levelId === 'tail' || room.levelId === 'paint') && Math.sin(lt * 3 + i) > 0.7 ? 2 : 0);
       b.socket.emit('in', [++b.seq, Math.round((dx / (dl || 1)) * 127 * sp), Math.round((dz / (dl || 1)) * 127 * sp), jmp | act]);
       continue;
     }

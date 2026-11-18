@@ -1,10 +1,11 @@
 import { useFrame } from '@react-three/fiber';
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { PROP_ID_BASE, TEAMBALL, ballPos, chemDoorOrder, moverOffset, sweeperAngle, type LevelDef, type Tile } from '@shared';
+import { PAINT, PROP_ID_BASE, TEAMBALL, TEAM_COLORS, ballPos, chemDoorOrder, moverOffset, sweeperAngle, type LevelDef, type Tile } from '@shared';
 import { net } from '../game/net';
 import { play } from '../game/sound';
 import { useStore } from '../game/store';
+import { updatePaint } from '../game/paint';
 
 const dummy = new THREE.Object3D();
 const col = new THREE.Color();
@@ -638,8 +639,54 @@ const WHITE_C = new THREE.Color('#ffffff');
 
 const GEM1 = new THREE.Color('#00a8ff');
 const GEM3 = new THREE.Color('#ffb700');
+const RAINBOW = new THREE.Color();
 
 /** 보물: 일정대로 나타나 빙글빙글 돌고, 누가 가져가면(서버 통보) 사라진다. */
+/**
+ * 색깔 땅따먹기 바닥: 24×24 칸을 한 장의 작은 그림(칸 하나 = 픽셀 하나)으로 만들어 바닥 위에 깐다.
+ * 칸이 바뀌어도 그림 한 장만 고치면 되어 그리기 비용이 거의 없다.
+ */
+function PaintFloor({ level }: { level: LevelDef }) {
+  const on = level.id === 'paint';
+  const { n, half } = PAINT;
+  const tex = useMemo(() => {
+    const t = new THREE.DataTexture(new Uint8Array(n * n * 4), n, n, THREE.RGBAFormat);
+    t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter;
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.needsUpdate = true;
+    return t;
+  }, [n]);
+  const rgb = useMemo(() => TEAM_COLORS.map((c) => new THREE.Color(c).lerp(new THREE.Color('#ffffff'), 0.12).convertLinearToSRGB()), []);
+  const seen = useRef(-1);
+  useEffect(() => () => tex.dispose(), [tex]);
+  useFrame(() => {
+    if (!on) return;
+    const v = updatePaint();
+    if (!v || v.version === seen.current) return;
+    seen.current = v.version;
+    const d = tex.image.data as Uint8Array;
+    for (let i = 0; i < n * n; i++) {
+      const ch = v.cells[i];
+      const k = ch >= '0' && ch <= '3' ? +ch : -1;
+      // 행(z)이 그림의 위아래가 되도록: 바닥을 눕히면서 뒤집히는 것을 맞춘다
+      const ix = i % n, iz = Math.floor(i / n), o = ((n - 1 - iz) * n + ix) * 4;
+      if (k < 0) { d[o + 3] = 0; continue; }
+      const c = rgb[k];
+      // 체크무늬처럼 칸마다 밝기를 살짝 달리해 칸 경계가 보이게 한다
+      const shade = (ix + iz) % 2 ? 1 : 0.9;
+      d[o] = c.r * 255 * shade; d[o + 1] = c.g * 255 * shade; d[o + 2] = c.b * 255 * shade; d[o + 3] = 255;
+    }
+    tex.needsUpdate = true;
+  });
+  if (!on) return null;
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} receiveShadow renderOrder={1}>
+      <planeGeometry args={[half * 2, half * 2]} />
+      <meshLambertMaterial map={tex} alphaTest={0.5} />
+    </mesh>
+  );
+}
+
 function Items({ level }: { level: LevelDef }) {
   const items = level.items ?? [];
   const mesh = useRef<THREE.InstancedMesh>(null!);
@@ -668,7 +715,7 @@ function Items({ level }: { level: LevelDef }) {
       dummy.scale.set(sc, sc * 1.35, sc);
       dummy.updateMatrix();
       mesh.current.setMatrixAt(n, dummy.matrix);
-      mesh.current.setColorAt(n, it.value > 1 ? GEM3 : GEM1);
+      mesh.current.setColorAt(n, level.id === 'paint' ? RAINBOW.setHSL((t * 0.4 + i * 0.13) % 1, 0.85, 0.55) : it.value > 1 ? GEM3 : GEM1);
       n++;
     }
     mesh.current.count = n;
@@ -1072,6 +1119,7 @@ export function LevelView({ level }: { level: LevelDef }) {
         </mesh>
       ))}
       <Items level={level} />
+      <PaintFloor level={level} />
       <instancedMesh ref={strips} args={[box, undefined, Math.max(1, cps.length)]} count={cps.length}>
         <meshBasicMaterial color="#ffffff" transparent opacity={0.85} />
       </instancedMesh>

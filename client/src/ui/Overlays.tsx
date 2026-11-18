@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { GAMES, QUIZ_PADS, TEAM_COLORS, TEAM_NAMES, chemRowZ, getGame, type RoomState, type RoundRow } from '@shared';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { GAMES, GOAL_DIRS, PAINT, QUIZ_PADS, TEAM_COLORS, TEAM_NAMES, chemRowZ, getGame, type RoomState, type RoundRow } from '@shared';
 import { net } from '../game/net';
+import { updatePaint } from '../game/paint';
 import { play, setMusicPref, setSfx, soundPrefs } from '../game/sound';
 import { setQuality, useStore, type Quality } from '../game/store';
 import { useSecondsLeft, useTicker } from './hooks';
@@ -286,6 +287,8 @@ export function TeamHud({ room, myId }: { room: RoomState; myId: number | null }
   const scores = game?.teams ?? [0, 0, 0, 0];
   const myTeam = room.players.find((p) => p.id === myId)?.team ?? null;
   const goal = game?.goal;
+  const paint = game?.paint;
+  const cells = useMemo(() => (paint ? [...paint].filter((c) => c !== '#').length : 0), [paint ? paint.length : 0]);
   const [toast, setToast] = useState<{ seq: number; text: string } | null>(null);
   useEffect(() => {
     if (!goal) return;
@@ -303,10 +306,11 @@ export function TeamHud({ room, myId }: { room: RoomState; myId: number | null }
         <div className="flex gap-1">
           {scores.map((v, t) => (
             <div key={t} className={`chip flex items-center gap-1 tabular-nums ${t === myTeam ? 'ring-4 ring-white' : ''}`} style={{ background: TEAM_COLORS[t], color: '#fff' }}>
-              {TEAM_NAMES[t]} <b className="text-lg">{v}</b>
+              {TEAM_NAMES[t]} <b className="text-lg">{paint ? `${Math.round((v / (cells || 1)) * 100)}%` : v}</b>
             </div>
           ))}
         </div>
+        {paint && <PaintMap team={myTeam} />}
       </div>
       <Timer left={left} urgent={10} />
       <div className="w-24" />
@@ -317,6 +321,49 @@ export function TeamHud({ room, myId }: { room: RoomState; myId: number | null }
       )}
     </div>
   );
+}
+
+/**
+ * 색깔 땅따먹기 미니맵: 판 전체와 내 위치. 우리 팀 출발 쪽이 아래로 오게 돌려서 화면 방향과 맞춘다.
+ */
+function PaintMap({ team }: { team: number | null }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const { n, half } = PAINT;
+    const S = 4; // 칸 하나의 픽셀
+    let raf = 0, last = 0;
+    const [dx, dz] = GOAL_DIRS[team ?? 2];
+    // 위에서 내려다본 지도: 화면 (x, y) = (−월드x, −월드z). 우리 팀이 처음 바라보는 쪽(가운데)이 위로 오게 돌린다.
+    const ang = -Math.PI / 2 - Math.atan2(dz, dx);
+    const draw = (now: number) => {
+      raf = requestAnimationFrame(draw);
+      if (now - last < 150) return;
+      last = now;
+      const c = ref.current?.getContext('2d');
+      const v = updatePaint();
+      if (!c || !v) return;
+      const me = net.myState();
+      const W = n * S;
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.clearRect(0, 0, W, W);
+      c.translate(W / 2, W / 2);
+      c.rotate(ang);
+      c.translate(-W / 2, -W / 2);
+      for (let i = 0; i < n * n; i++) {
+        const ch = v.cells[i];
+        c.fillStyle = ch === '#' ? '#6b5b95' : ch === '.' ? 'rgba(255,255,255,0.85)' : TEAM_COLORS[+ch];
+        c.fillRect((n - 1 - (i % n)) * S, (n - 1 - Math.floor(i / n)) * S, S, S);
+      }
+      if (me) {
+        const px = (1 - (me.x + half) / (half * 2)) * W, py = (1 - (me.z + half) / (half * 2)) * W;
+        c.fillStyle = '#ffffff'; c.strokeStyle = '#222'; c.lineWidth = 2;
+        c.beginPath(); c.arc(px, py, 4.5, 0, Math.PI * 2); c.fill(); c.stroke();
+      }
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [team]);
+  return <canvas ref={ref} width={PAINT.n * 4} height={PAINT.n * 4} className="h-24 w-24 rounded-xl border-4 border-white shadow-lg" />;
 }
 
 /** 게임 장르에 맞는 경기 중 HUD */

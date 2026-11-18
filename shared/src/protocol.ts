@@ -171,6 +171,8 @@ export interface CollectState {
   /** 팀 공 넣기: 팀별 점수와 가장 최근 골(scorer: 득점 팀, -1이면 자책골 / into: 골을 먹은 팀) */
   teams?: number[];
   goal?: { seq: number; scorer: number; into: number };
+  /** 색깔 땅따먹기: 칸마다 '.' 빈 칸, '0'~'3' 팀, '#' 장애물 */
+  paint?: string;
 }
 export interface GameStateMsg { key: string; state: CollectState | null }
 

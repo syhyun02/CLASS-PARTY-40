@@ -6,6 +6,7 @@ import type { PublicQ } from './chem/bank';
 import { buildChemMaze, buildMaze } from './levels/maze';
 import { buildHover } from './levels/hover';
 import { buildTeamBall } from './levels/teamball';
+import { buildPaint } from './levels/paint';
 import { buildQuiz } from './levels/quiz';
 
 export type GameMode = 'play' | 'chem';
@@ -72,6 +73,10 @@ export const GAMES: GameMeta[] = [
   {
     id: 'teamball', name: '팀 공 넣기', emoji: '⚽', genre: 'team', modes: ['play', 'chem'], action: '차기', teams: 4,
     howTo: '4팀 대결! 공을 밀거나 차서 다른 팀 골대에 넣어요', timeLimit: 90, implemented: true, buildLevel: buildTeamBall,
+  },
+  {
+    id: 'paint', name: '색깔 땅따먹기', emoji: '🎨', genre: 'team', modes: ['play', 'chem'], action: '밀기', teams: 4,
+    howTo: '밟는 칸이 우리 팀 색으로! 페인트 폭탄을 먹으면 주변이 한꺼번에 칠해져요', timeLimit: 90, implemented: true, buildLevel: buildPaint,
   },
   {
     id: 'hover', name: '둥둥 호버보드', emoji: '🛸', genre: 'survival', modes: ['play', 'chem'],
