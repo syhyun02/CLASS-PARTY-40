@@ -396,7 +396,9 @@ export class Room {
     if (this.paused) { this.flush(); return; }
     this.tick++;
     const sim = this.sim;
+    let t0 = performance.now();
     sim.setTick(this.tick - this.levelTick);
+    let t1 = performance.now(); metrics.phase.world += t1 - t0; t0 = t1;
 
     for (const p of this.players.values()) {
       if (!p.connected || !p.active || p.out) continue;
@@ -448,8 +450,10 @@ export class Room {
         sim.stepPlayer(p.state, p.input, p.id, can, slow);
       }
     }
+    t1 = performance.now(); metrics.phase.move += t1 - t0; t0 = t1;
     this.updateGrabs();
     this.separatePlayers();
+    t1 = performance.now(); metrics.phase.bodies += t1 - t0; t0 = t1;
 
     if (this.phase === 'playing' && this.runtime) {
       this.runtime.onTick();
@@ -475,7 +479,9 @@ export class Room {
       this.gameDirty = false;
       this.io.to(this.channel).emit('g', { key: this.levelKey, state: this.gameState });
     }
+    t1 = performance.now(); metrics.phase.rules += t1 - t0; t0 = t1;
     if (this.tick % SNAPSHOT_EVERY === 0) this.broadcastSnapshot();
+    metrics.phase.send += performance.now() - t0;
   }
 
   /**
@@ -535,13 +541,22 @@ export class Room {
   }
 
   /** 겹친 캐릭터를 서로 밀어낸다(서버 판정). 벽을 뚫지 않도록 물리 엔진을 거쳐 이동한다. */
+  /**
+   * 겹친 캐릭터를 서로 밀어낸다(서버 판정). 겹친 쌍마다 미는 양을 사람별로 모은 뒤,
+   * 사람마다 한 번만 물리 엔진으로 움직인다(쌍마다 두 번씩 부르면 몰려 있을 때 한 틱에 수백 번이 된다).
+   */
   private separatePlayers() {
-    const list: Player[] = [];
+    const list = this.sepList;
+    list.length = 0;
     for (const p of this.players.values()) if (p.connected && p.active && !p.out) list.push(p);
-    const min = BODY_DIST;
-    for (let i = 0; i < list.length; i++) {
+    const n = list.length, min = BODY_DIST;
+    if (this.sepX.length < n) { this.sepX = new Float64Array(64); this.sepZ = new Float64Array(64); }
+    const px = this.sepX, pz = this.sepZ;
+    px.fill(0, 0, n); pz.fill(0, 0, n);
+    let any = false;
+    for (let i = 0; i < n; i++) {
       const a = list[i].state;
-      for (let j = i + 1; j < list.length; j++) {
+      for (let j = i + 1; j < n; j++) {
         const b = list[j].state;
         const dx = b.x - a.x, dz = b.z - a.z;
         if (dx > min || dx < -min || dz > min || dz < -min || Math.abs(b.y - a.y) > 1) continue;
@@ -551,11 +566,23 @@ export class Room {
         // 완전히 겹치면 자리 번호로 방향을 정해 흩어 놓는다
         const nx = d > 1e-4 ? dx / d : Math.cos(i * 2.4), nz = d > 1e-4 ? dz / d : Math.sin(i * 2.4);
         const push = bodyPush(d);
-        this.sim.nudge(a, -nx * push, -nz * push);
-        this.sim.nudge(b, nx * push, nz * push);
+        px[i] -= nx * push; pz[i] -= nz * push; px[j] += nx * push; pz[j] += nz * push;
+        any = true;
       }
     }
+    if (!any) return;
+    const cap = 10 / TICK_RATE; // 여럿에게 한꺼번에 밀려도 한 틱에 너무 멀리 튀지 않게
+    for (let i = 0; i < n; i++) {
+      let x = px[i], z = pz[i];
+      const m = Math.hypot(x, z);
+      if (m < 1e-4) continue;
+      if (m > cap) { x *= cap / m; z *= cap / m; }
+      this.sim.nudge(list[i].state, x, z);
+    }
   }
+  private sepList: Player[] = [];
+  private sepX = new Float64Array(64);
+  private sepZ = new Float64Array(64);
 
   private broadcastSnapshot() {
     const snap: SnapPlayer[] = [];
@@ -579,6 +606,8 @@ export class Room {
     let bytes = 0;
     for (const p of this.players.values()) {
       if (!p.socket) continue;
+      // 탈락했거나 관전 중이면 내 캐릭터를 예측하지 않으므로 내 상태는 빼고 보낸다
+      if (p.out || !p.active) { p.socket.emit('u', snapB64); bytes += snapB64.length + 8; continue; }
       const selfB64 = Buffer.from(encodeSelf({ t: this.tick, q: p.lastSeq, s: packState(p.state) })).toString('base64');
       p.socket.emit('u', snapB64, selfB64);
       bytes += snapB64.length + selfB64.length + 12;

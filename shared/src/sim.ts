@@ -83,6 +83,7 @@ export class SimWorld {
   private tileOn: boolean[] = [];
   private ray: RAPIER_NS.Ray;
   private time = 0;
+  private stepped = false;
   private tick = -1;
 
   constructor(R: Rapier, readonly level: LevelDef) {
@@ -125,6 +126,7 @@ export class SimWorld {
     this.tick = tick;
     this.time = tick * DT;
     const movers = this.level.movers;
+    let changed = false;
     for (let i = 0; i < movers.length; i++) {
       const m = movers[i];
       const a = moverOffset(m, this.time);
@@ -133,7 +135,9 @@ export class SimWorld {
       this.moverDelta[i][1] = a[1] - b[1];
       this.moverDelta[i][2] = a[2] - b[2];
       const pos = this.moverPos[i];
-      pos[0] = m.p[0] + a[0]; pos[1] = m.p[1] + a[1]; pos[2] = m.p[2] + a[2];
+      const nx = m.p[0] + a[0], ny = m.p[1] + a[1], nz = m.p[2] + a[2];
+      if (nx !== pos[0] || ny !== pos[1] || nz !== pos[2]) changed = true;
+      pos[0] = nx; pos[1] = ny; pos[2] = nz;
       this.moverCols[i].setTranslation({ x: pos[0], y: pos[1], z: pos[2] });
     }
     // 사라지는 발판: 시각만으로 켜고 끄므로 예측을 되감아 재생해도 결과가 같다
@@ -141,10 +145,11 @@ export class SimWorld {
     if (tiles) {
       for (let i = 0; i < tiles.length; i++) {
         const on = tileOn(tiles[i], this.time);
-        if (on !== this.tileOn[i]) { this.tileOn[i] = on; this.tileCols[i].setEnabled(on); }
+        if (on !== this.tileOn[i]) { this.tileOn[i] = on; this.tileCols[i].setEnabled(on); changed = true; }
       }
     }
-    this.world.step(); // 충돌 질의 구조 갱신(동적 물체가 없어서 가볍다)
+    // 충돌 질의 구조 갱신: 움직인 발판이나 켜지고 꺼진 발판이 있을 때만(처음 한 번은 반드시)
+    if (changed || !this.stepped) { this.world.step(); this.stepped = true; }
   }
 
   /**

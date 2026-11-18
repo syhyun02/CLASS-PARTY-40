@@ -99,12 +99,74 @@ function bounds(level: LevelDef) {
   return { x0, x1, z0, z1, y1 };
 }
 
+const CLOUD_CHUNK = 36;
+
+/**
+ * 구름 바다. z 방향으로 토막을 나눠 토막마다 따로 그려서, 카메라 뒤나 화면 밖 토막은
+ * 통째로 컬링된다(긴 호버보드 트랙에서 수십 개의 큰 구가 겹쳐 그려지던 비용을 줄인다).
+ * 경기장보다 나중에 그려 가려진 픽셀은 깊이 검사에서 바로 버려지게 한다.
+ */
+function Clouds({ level, B, n, sphere }: { level: LevelDef; B: ReturnType<typeof bounds>; n: number; sphere: THREE.BufferGeometry }) {
+  const chunks = useMemo(() => {
+    const r = seeded(11);
+    const zMin = B.z0 - 30, zLen = B.z1 - B.z0 + 90;
+    // 넓이에 비례해 개수를 정하되(긴 트랙은 듬성듬성해지지 않게) 화질별 상한을 둔다
+    const area = (B.x1 - B.x0 + 90) * zLen;
+    const count = Math.min(n, Math.max(Math.round(n * 0.5), Math.round(area / 190)));
+    const out: THREE.Matrix4[][] = [];
+    const d = new THREE.Object3D();
+    for (let i = 0; i < count; i++) {
+      const x = B.x0 - 45 + r() * (B.x1 - B.x0 + 90), z = zMin + r() * zLen;
+      const under = x > B.x0 - 3 && x < B.x1 + 3;
+      d.position.set(x, Math.min(level.killY, -9) - (under ? 9 : 7) - r() * 6, z);
+      const s = 3.5 + r() * 4.5;
+      d.scale.set(s * 1.6, s * 0.6, s * 1.3);
+      d.updateMatrix();
+      const k = Math.floor((z - zMin) / CLOUD_CHUNK);
+      (out[k] ??= []).push(d.matrix.clone());
+    }
+    return out.filter(Boolean);
+  }, [level, B, n]);
+  const geo = useMemo(() => {
+    const g = sphere.clone();
+    const nr = g.getAttribute('normal');
+    const c = new Float32Array(nr.count * 3);
+    const top = new THREE.Color('#ffffff'), bot = new THREE.Color('#b9c6f2'), t = new THREE.Color();
+    for (let i = 0; i < nr.count; i++) {
+      t.copy(bot).lerp(top, Math.min(1, Math.max(0, nr.getY(i) * 0.6 + 0.55)));
+      c[i * 3] = t.r; c[i * 3 + 1] = t.g; c[i * 3 + 2] = t.b;
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+    return g;
+  }, [sphere]);
+  useEffect(() => () => geo.dispose(), [geo]);
+  return (
+    <>
+      {chunks.map((ms, k) => <CloudChunk key={k} ms={ms} sphere={geo} />)}
+    </>
+  );
+}
+
+// 조명 계산 없는 재질: 구름은 화면을 넓게 덮어 픽셀 비용이 크다. 위쪽이 밝고 아래가 푸르스름한
+// 음영은 정점 법선으로 꼭짓점 색을 만들어 흉내 낸다.
+const cloudMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+
+function CloudChunk({ ms, sphere }: { ms: THREE.Matrix4[]; sphere: THREE.BufferGeometry }) {
+  const ref = useRef<THREE.InstancedMesh>(null!);
+  useLayoutEffect(() => {
+    const m = ref.current;
+    ms.forEach((mx, i) => m.setMatrixAt(i, mx));
+    m.instanceMatrix.needsUpdate = true;
+    m.computeBoundingSphere();
+  }, [ms]);
+  return <instancedMesh ref={ref} args={[sphere, cloudMat, ms.length]} renderOrder={2} />;
+}
+
 /**
  * 판정과 무관한 꾸밈: 구름 바다, 떠다니는 풍선과 고리, 체크포인트 아치.
  * 전부 걸을 수 있는 영역 바깥에만 놓아서 "밟을 수 있나?" 하는 혼동이 없게 한다.
  */
 function Decor({ level, low, hi }: { level: LevelDef; low: boolean; hi: boolean }) {
-  const clouds = useRef<THREE.InstancedMesh>(null!);
   const balloons = useRef<THREE.InstancedMesh>(null!);
   const rings = useRef<THREE.InstancedMesh>(null!);
   const posts = useRef<THREE.InstancedMesh>(null!);
@@ -129,19 +191,7 @@ function Decor({ level, low, hi }: { level: LevelDef; low: boolean; hi: boolean 
   }, [B, nBalloon]);
 
   useLayoutEffect(() => {
-    const r = seeded(11);
-    // 구름 바다: 경기장 아래와 옆을 덮어 "하늘 위에 떠 있는" 느낌을 만든다
-    for (let i = 0; i < nCloud; i++) {
-      const x = B.x0 - 45 + r() * (B.x1 - B.x0 + 90), z = B.z0 - 30 + r() * (B.z1 - B.z0 + 90);
-      const under = x > B.x0 - 3 && x < B.x1 + 3;
-      dummy.position.set(x, Math.min(level.killY, -9) - (under ? 9 : 7) - r() * 6, z);
-      const s = 3.5 + r() * 4.5;
-      dummy.scale.set(s * 1.6, s * 0.6, s * 1.3);
-      dummy.rotation.set(0, 0, 0);
-      dummy.updateMatrix();
-      clouds.current.setMatrixAt(i, dummy.matrix);
-    }
-    clouds.current.instanceMatrix.needsUpdate = true;
+    const r = seeded(12);
     for (let i = 0; i < nRing; i++) {
       const side = i % 2 ? 1 : -1;
       dummy.position.set((side > 0 ? B.x1 : B.x0) + side * ((level.track ? 9 : 24) + r() * 16), B.y1 + 2 + r() * 10, B.z0 + r() * (B.z1 - B.z0 + 20));
@@ -168,7 +218,7 @@ function Decor({ level, low, hi }: { level: LevelDef; low: boolean; hi: boolean 
       }
     });
     posts.current.instanceMatrix.needsUpdate = true;
-  }, [level, B, nCloud, nRing]);
+  }, [level, B, nRing]);
 
   useFrame((state) => {
     const t = state.clock.elapsedTime;
@@ -184,9 +234,7 @@ function Decor({ level, low, hi }: { level: LevelDef; low: boolean; hi: boolean 
 
   return (
     <group>
-      <instancedMesh ref={clouds} args={[sphere, undefined, nCloud]} frustumCulled={false}>
-        <meshLambertMaterial color="#eef3ff" emissive="#a9b8f5" emissiveIntensity={0.2} />
-      </instancedMesh>
+      <Clouds level={level} B={B} n={nCloud} sphere={sphere} />
       <instancedMesh ref={balloons} args={[sphere, undefined, nBalloon]} frustumCulled={false}>
         <meshLambertMaterial />
       </instancedMesh>

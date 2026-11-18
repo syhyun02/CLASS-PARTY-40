@@ -21,7 +21,7 @@ interface Pending { seq: number; input: PlayerInput; canMove: boolean; slow: boo
 const MIN_DELAY = SNAPSHOT_EVERY + 2; // 틱(약 83ms): 흔들림이 없을 때
 const MAX_DELAY = Math.round(0.35 * TICK_RATE); // 틱(350ms): 이보다 오래 끊기면 예측 이동으로 버틴다
 const MAX_EXTRAPOLATE = Math.round(0.25 * TICK_RATE); // 새 소식이 없을 때 가던 방향으로 계속 그려 주는 최대 시간
-const INPUT_BATCH = 2; // 입력 2개를 한 번에 보낸다(초당 30번). 패킷 수를 절반으로 줄인다
+const INPUT_BATCH = 3; // 입력 3개를 한 번에 보낸다(초당 20번, 받는 스냅샷과 같은 빈도). 교실 Wi-Fi의 올려 보내는 패킷 수를 줄인다
 const MAX_PENDING = Math.round(1.5 * TICK_RATE);
 
 // 물리 엔진(약 2MB)은 입장할 때 내려받는다. 첫 화면이 빨리 뜨도록 미리 묶지 않는다.

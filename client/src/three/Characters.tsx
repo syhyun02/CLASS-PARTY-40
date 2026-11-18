@@ -25,6 +25,7 @@ const col = new THREE.Color();
 const col2 = new THREE.Color();
 const WHITE = new THREE.Color('#ffffff');
 const LEAF = new THREE.Color('#40c057');
+const LOD_DIST = 12; // 이보다 멀면 거친 모양으로 그린다(m)
 const FACE_DIST = 26; // 이보다 멀면 얼굴 부위를 생략한다(m)
 const LIMBS = 13; // 발 2 + 손 2 + 배 1 + 머리 장식 3 + 꼬리 3 + 엉덩이 꼬리 1 + 팀 머리띠 1
 const TEAM_C = TEAM_COLORS.map((c) => new THREE.Color(c));
@@ -119,6 +120,10 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
   const small = useMemo(() => new THREE.SphereGeometry(1, quality === 'high' ? 12 : 8, quality === 'high' ? 9 : 6), [quality]);
   // 테두리는 가장자리 윤곽만 보이므로 몸통보다 거친 구로 충분하다
   const outlineGeo = useMemo(() => new THREE.SphereGeometry(1, quality === 'high' ? 18 : 12, quality === 'high' ? 12 : 8), [quality]);
+  // 멀리 있는 캐릭터용 거친 구(삼각형 수가 몸통 1/3, 팔다리 1/2 정도)
+  const sphereFar = useMemo(() => new THREE.SphereGeometry(1, 10, 7), []);
+  const outlineFar = useMemo(() => new THREE.SphereGeometry(1, 8, 6), []);
+  const smallFar = useMemo(() => new THREE.SphereGeometry(1, 6, 4), []);
   // 눈 반짝임·눈동자·볼처럼 아주 작은 부위용
   const tiny = useMemo(() => new THREE.SphereGeometry(1, quality === 'high' ? 10 : 6, quality === 'high' ? 7 : 4), [quality]);
   const disc = useMemo(() => new THREE.CircleGeometry(1, 16).rotateX(-Math.PI / 2), []);
@@ -126,6 +131,9 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
   const arc = useMemo(() => new THREE.TorusGeometry(1, 0.26, 5, 10, Math.PI), []);
   const bodies = useRef<THREE.InstancedMesh>(null!);
   const limbs = useRef<THREE.InstancedMesh>(null!);
+  const bodiesFar = useRef<THREE.InstancedMesh>(null!);
+  const limbsFar = useRef<THREE.InstancedMesh>(null!);
+  const outlinesFar = useRef<THREE.InstancedMesh>(null);
   const outlines = useRef<THREE.InstancedMesh>(null);
   const whites = useRef<THREE.InstancedMesh>(null!);
   const darks = useRef<THREE.InstancedMesh>(null!);
@@ -201,6 +209,11 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       const visible = frustum.intersectsSphere(bound);
       const camD = camPos.distanceTo(bound.center);
       const far = camD > FACE_DIST; // 멀면 눈·입·볼 같은 작은 부위는 몇 픽셀이라 생략한다
+      // 12m보다 멀면 몸통·테두리·팔다리를 거친 모양으로 그린다(나는 항상 정밀하게)
+      const lod = !p.isMe && camD > LOD_DIST;
+      const bodyM = lod ? bodiesFar.current : bodies.current;
+      const outlineM = lod ? outlinesFar.current : outlines.current;
+      const limbM = lod ? limbsFar.current : limbs.current;
       if (!visible) {
         if (p.isMe) meShown = false;
         n++;
@@ -226,60 +239,60 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       const B = n * 2;
       const headBob = Math.sin(a.phase * 2) * 0.025 * run;
       const HY = 0.93 + headBob; // 머리 중심 높이
-      part(bodies.current, B, 0, 0.42, 0, 0.4, 0.39, 0.38);
-      part(bodies.current, B + 1, 0, HY, 0.02, 0.47, 0.43, 0.44);
+      part(bodyM, B, 0, 0.42, 0, 0.4, 0.39, 0.38);
+      part(bodyM, B + 1, 0, HY, 0.02, 0.47, 0.43, 0.44);
       col.set(pi.color);
-      colorAt(bodies.current, B, col); colorAt(bodies.current, B + 1, col);
-      if (outlines.current) {
-        part(outlines.current, B, 0, 0.42, 0, 0.43, 0.42, 0.41);
-        part(outlines.current, B + 1, 0, HY, 0.02, 0.5, 0.46, 0.47);
+      colorAt(bodyM, B, col); colorAt(bodyM, B + 1, col);
+      if (outlineM) {
+        part(outlineM, B, 0, 0.42, 0, 0.43, 0.42, 0.41);
+        part(outlineM, B + 1, 0, HY, 0.02, 0.5, 0.46, 0.47);
         col2.copy(col).multiplyScalar(0.42);
-        colorAt(outlines.current, B, col2); colorAt(outlines.current, B + 1, col2);
+        colorAt(outlineM, B, col2); colorAt(outlineM, B + 1, col2);
       }
       const L = n * LIMBS;
       // 밝은 배
-      part(limbs.current, L + 4, 0, 0.38, 0.17, 0.29, 0.27, 0.25);
-      colorAt(limbs.current, L + 4, col2.copy(col).lerp(WHITE, 0.62));
+      part(limbM, L + 4, 0, 0.38, 0.17, 0.29, 0.27, 0.25);
+      colorAt(limbM, L + 4, col2.copy(col).lerp(WHITE, 0.62));
       // 팔다리(몸보다 조금 진한 색)
       col2.copy(col).multiplyScalar(0.8);
       const stride = Math.sin(a.phase) * 0.22 * run, lift = Math.max(0, Math.cos(a.phase)) * 0.14 * run;
       const lift2 = Math.max(0, -Math.cos(a.phase)) * 0.14 * run;
       const tuck = airborne ? 0.1 : 0;
       const handUp = win ? 0.5 + Math.sin(time * 10 + p.id) * 0.06 : airborne || stun ? 0.3 : lose ? -0.1 : 0;
-      part(limbs.current, L, -0.19, 0.09 + lift + tuck, stride + 0.05, 0.155, 0.105, 0.21);
-      part(limbs.current, L + 1, 0.19, 0.09 + lift2 + tuck, -stride + 0.05, 0.155, 0.105, 0.21);
+      part(limbM, L, -0.19, 0.09 + lift + tuck, stride + 0.05, 0.155, 0.105, 0.21);
+      part(limbM, L + 1, 0.19, 0.09 + lift2 + tuck, -stride + 0.05, 0.155, 0.105, 0.21);
       if (p.flags & (FLAG_ACT | FLAG_GRAB)) {
         // 밀치기·잡기: 두 손을 앞으로 쭉 뻗는다
-        part(limbs.current, L + 2, -0.22, 0.5, 0.56, 0.15, 0.15, 0.15);
-        part(limbs.current, L + 3, 0.22, 0.5, 0.56, 0.15, 0.15, 0.15);
+        part(limbM, L + 2, -0.22, 0.5, 0.56, 0.15, 0.15, 0.15);
+        part(limbM, L + 3, 0.22, 0.5, 0.56, 0.15, 0.15, 0.15);
       } else if (p.flags & FLAG_HELD || shoved) {
         // 잡히거나 밀쳐졌을 때: 팔을 허우적거린다
         const fl = Math.sin(time * 22 + p.id) * 0.16;
-        part(limbs.current, L + 2, -0.5, 0.62 + fl, 0, 0.125, 0.125, 0.125);
-        part(limbs.current, L + 3, 0.5, 0.62 - fl, 0, 0.125, 0.125, 0.125);
+        part(limbM, L + 2, -0.5, 0.62 + fl, 0, 0.125, 0.125, 0.125);
+        part(limbM, L + 3, 0.5, 0.62 - fl, 0, 0.125, 0.125, 0.125);
       } else {
-        part(limbs.current, L + 2, -0.44, 0.46 + handUp, -stride * 0.9, 0.125, 0.125, 0.125);
-        part(limbs.current, L + 3, 0.44, 0.46 + handUp, stride * 0.9, 0.125, 0.125, 0.125);
+        part(limbM, L + 2, -0.44, 0.46 + handUp, -stride * 0.9, 0.125, 0.125, 0.125);
+        part(limbM, L + 3, 0.44, 0.46 + handUp, stride * 0.9, 0.125, 0.125, 0.125);
       }
-      for (let k = 0; k < 4; k++) colorAt(limbs.current, L + k, col2);
+      for (let k = 0; k < 4; k++) colorAt(limbM, L + k, col2);
 
       // 꼬리 지키기의 큰 꼬리, 아니면 작은 엉덩이 꼬리
       if (tails && tails.has(p.id)) {
         const wag = Math.sin(time * 9 + p.id) * 0.14;
-        part(limbs.current, L + 8, wag * 0.4, 0.38, -0.46, 0.16, 0.16, 0.2);
-        part(limbs.current, L + 9, wag, 0.52, -0.72, 0.19, 0.19, 0.22);
-        part(limbs.current, L + 10, wag * 1.6, 0.7, -0.94, 0.14, 0.14, 0.16);
-        colorAt(limbs.current, L + 8, TAIL); colorAt(limbs.current, L + 9, TAIL); colorAt(limbs.current, L + 10, TAIL_TIP);
+        part(limbM, L + 8, wag * 0.4, 0.38, -0.46, 0.16, 0.16, 0.2);
+        part(limbM, L + 9, wag, 0.52, -0.72, 0.19, 0.19, 0.22);
+        part(limbM, L + 10, wag * 1.6, 0.7, -0.94, 0.14, 0.14, 0.16);
+        colorAt(limbM, L + 8, TAIL); colorAt(limbM, L + 9, TAIL); colorAt(limbM, L + 10, TAIL_TIP);
       } else {
-        part(limbs.current, L + 11, Math.sin(a.phase * 2) * 0.03 * run, 0.34, -0.39, 0.1, 0.1, 0.1);
-        colorAt(limbs.current, L + 11, col2.copy(col).lerp(WHITE, 0.5));
+        part(limbM, L + 11, Math.sin(a.phase * 2) * 0.03 * run, 0.34, -0.39, 0.1, 0.1, 0.1);
+        colorAt(limbM, L + 11, col2.copy(col).lerp(WHITE, 0.5));
       }
 
       // 팀 게임: 팀 색 머리띠
       const team = pi.team ?? -1;
       if (team >= 0) {
-        part(limbs.current, L + 12, 0, HY + 0.15, 0.02, 0.495, 0.075, 0.465);
-        colorAt(limbs.current, L + 12, TEAM_C[team]);
+        part(limbM, L + 12, 0, HY + 0.15, 0.02, 0.495, 0.075, 0.465);
+        colorAt(limbM, L + 12, TEAM_C[team]);
       }
       // 머리 장식 7종: 번호마다 달라서 같은 색이어도 구별된다
       const bob = headBob + (airborne ? 0.04 : 0);
@@ -287,37 +300,37 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       const kind = p.id % 7;
       col2.copy(col).multiplyScalar(0.8);
       if (kind === 0) { // 곰 귀
-        part(limbs.current, L + 5, -0.3, TOP - 0.06 + bob, 0, 0.15, 0.15, 0.09);
-        part(limbs.current, L + 6, 0.3, TOP - 0.06 + bob, 0, 0.15, 0.15, 0.09);
-        colorAt(limbs.current, L + 5, col2); colorAt(limbs.current, L + 6, col2);
+        part(limbM, L + 5, -0.3, TOP - 0.06 + bob, 0, 0.15, 0.15, 0.09);
+        part(limbM, L + 6, 0.3, TOP - 0.06 + bob, 0, 0.15, 0.15, 0.09);
+        colorAt(limbM, L + 5, col2); colorAt(limbM, L + 6, col2);
       } else if (kind === 1) { // 토끼 귀(달릴 때 뒤로 젖혀진다)
         const back = -0.08 - run * 0.14;
-        part(limbs.current, L + 5, -0.17, TOP + 0.2 + bob, back, 0.085, 0.3, 0.07);
-        part(limbs.current, L + 6, 0.17, TOP + 0.2 + bob, back, 0.085, 0.3, 0.07);
-        colorAt(limbs.current, L + 5, col2); colorAt(limbs.current, L + 6, col2);
+        part(limbM, L + 5, -0.17, TOP + 0.2 + bob, back, 0.085, 0.3, 0.07);
+        part(limbM, L + 6, 0.17, TOP + 0.2 + bob, back, 0.085, 0.3, 0.07);
+        colorAt(limbM, L + 5, col2); colorAt(limbM, L + 6, col2);
       } else if (kind === 2) { // 방울
-        part(limbs.current, L + 5, 0, TOP + 0.1 + bob * 2, 0, 0.16, 0.16, 0.16);
-        colorAt(limbs.current, L + 5, WHITE);
+        part(limbM, L + 5, 0, TOP + 0.1 + bob * 2, 0, 0.16, 0.16, 0.16);
+        colorAt(limbM, L + 5, WHITE);
       } else if (kind === 3) { // 볏
         col2.copy(col).offsetHSL(0.5, 0, 0);
         for (let k = 0; k < 3; k++) {
-          part(limbs.current, L + 5 + k, 0, TOP + 0.04 - Math.abs(k - 1) * 0.07 + bob, (k - 1) * 0.17, 0.07, 0.13, 0.11);
-          colorAt(limbs.current, L + 5 + k, col2);
+          part(limbM, L + 5 + k, 0, TOP + 0.04 - Math.abs(k - 1) * 0.07 + bob, (k - 1) * 0.17, 0.07, 0.13, 0.11);
+          colorAt(limbM, L + 5 + k, col2);
         }
       } else if (kind === 4) { // 양갈래
-        part(limbs.current, L + 5, -0.46, HY + 0.24 + bob, -0.06, 0.17, 0.17, 0.17);
-        part(limbs.current, L + 6, 0.46, HY + 0.24 + bob, -0.06, 0.17, 0.17, 0.17);
-        colorAt(limbs.current, L + 5, col2); colorAt(limbs.current, L + 6, col2);
+        part(limbM, L + 5, -0.46, HY + 0.24 + bob, -0.06, 0.17, 0.17, 0.17);
+        part(limbM, L + 6, 0.46, HY + 0.24 + bob, -0.06, 0.17, 0.17, 0.17);
+        colorAt(limbM, L + 5, col2); colorAt(limbM, L + 6, col2);
       } else if (kind === 5) { // 새싹
-        part(limbs.current, L + 5, -0.11, TOP + 0.13 + bob * 2, 0, 0.13, 0.045, 0.08);
-        part(limbs.current, L + 6, 0.11, TOP + 0.13 + bob * 2, 0, 0.13, 0.045, 0.08);
-        part(limbs.current, L + 7, 0, TOP + 0.05 + bob, 0, 0.035, 0.08, 0.035);
-        for (let k = 5; k < 8; k++) colorAt(limbs.current, L + k, LEAF);
+        part(limbM, L + 5, -0.11, TOP + 0.13 + bob * 2, 0, 0.13, 0.045, 0.08);
+        part(limbM, L + 6, 0.11, TOP + 0.13 + bob * 2, 0, 0.13, 0.045, 0.08);
+        part(limbM, L + 7, 0, TOP + 0.05 + bob, 0, 0.035, 0.08, 0.035);
+        for (let k = 5; k < 8; k++) colorAt(limbM, L + k, LEAF);
       } else { // 리본
-        part(limbs.current, L + 5, -0.15, TOP + 0.02 + bob, 0.05, 0.14, 0.1, 0.07);
-        part(limbs.current, L + 6, 0.15, TOP + 0.02 + bob, 0.05, 0.14, 0.1, 0.07);
-        part(limbs.current, L + 7, 0, TOP + 0.02 + bob, 0.07, 0.06, 0.06, 0.06);
-        colorAt(limbs.current, L + 5, BOW); colorAt(limbs.current, L + 6, BOW); colorAt(limbs.current, L + 7, WHITE);
+        part(limbM, L + 5, -0.15, TOP + 0.02 + bob, 0.05, 0.14, 0.1, 0.07);
+        part(limbM, L + 6, 0.15, TOP + 0.02 + bob, 0.05, 0.14, 0.1, 0.07);
+        part(limbM, L + 7, 0, TOP + 0.02 + bob, 0.07, 0.06, 0.06, 0.06);
+        colorAt(limbM, L + 5, BOW); colorAt(limbM, L + 6, BOW); colorAt(limbM, L + 7, WHITE);
       }
 
       if (!far) {
@@ -408,6 +421,8 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
     const cnt = (m: THREE.InstancedMesh | null) => (m ? slots.get(m)?.n ?? 0 : 0);
     set(bodies.current, cnt(bodies.current)); set(limbs.current, cnt(limbs.current)); set(whites.current, cnt(whites.current));
     if (outlines.current) set(outlines.current, cnt(outlines.current));
+    set(bodiesFar.current, cnt(bodiesFar.current)); set(limbsFar.current, cnt(limbsFar.current));
+    if (outlinesFar.current) set(outlinesFar.current, cnt(outlinesFar.current));
     set(darks.current, cnt(darks.current)); set(cheeks.current, cnt(cheeks.current)); set(arcs.current, cnt(arcs.current)); set(shadows.current, shadowN);
   });
 
@@ -419,12 +434,21 @@ export function Characters({ nameRange = 22 }: { nameRange?: number }) {
       <instancedMesh ref={bodies} args={[sphere, undefined, N * 2]} frustumCulled={false} castShadow={shadow}>
         {cheap ? <meshLambertMaterial /> : <meshStandardMaterial roughness={0.42} metalness={0} />}
       </instancedMesh>
-      {!low && (
+      <instancedMesh ref={bodiesFar} args={[sphereFar, undefined, N * 2]} frustumCulled={false} castShadow={shadow}>
+        {cheap ? <meshLambertMaterial /> : <meshStandardMaterial roughness={0.42} metalness={0} />}
+      </instancedMesh>
+      {!low && (<>
         <instancedMesh ref={outlines} args={[outlineGeo, undefined, N * 2]} frustumCulled={false}>
           <meshBasicMaterial side={THREE.BackSide} />
         </instancedMesh>
-      )}
+        <instancedMesh ref={outlinesFar} args={[outlineFar, undefined, N * 2]} frustumCulled={false}>
+          <meshBasicMaterial side={THREE.BackSide} />
+        </instancedMesh>
+      </>)}
       <instancedMesh ref={limbs} args={[small, undefined, N * LIMBS]} frustumCulled={false} castShadow={shadow}>
+        {cheap ? <meshLambertMaterial /> : <meshStandardMaterial roughness={0.5} metalness={0} />}
+      </instancedMesh>
+      <instancedMesh ref={limbsFar} args={[smallFar, undefined, N * LIMBS]} frustumCulled={false} castShadow={shadow}>
         {cheap ? <meshLambertMaterial /> : <meshStandardMaterial roughness={0.5} metalness={0} />}
       </instancedMesh>
       <instancedMesh ref={whites} args={[tiny, undefined, N * 6]} frustumCulled={false}>

@@ -56,6 +56,7 @@ app.get('/api/metrics', (_req, res) => {
     rooms: rooms.size, players, sockets: io.engine.clientsCount,
     tick: tickStats(), ticks: metrics.ticks, lateTicks: metrics.lateTicks,
     bytesOut: metrics.bytesOut, snapshots: metrics.snapshots,
+    phaseMs: metrics.phase,
     inputs: metrics.inputs, guessed: metrics.guessed, dropped: metrics.dropped, idle: metrics.idle,
     cpuMs: (cpu.user + cpu.system) / 1000, rssMb: mem.rss / 1048576, heapMb: mem.heapUsed / 1048576,
     uptime: process.uptime(),

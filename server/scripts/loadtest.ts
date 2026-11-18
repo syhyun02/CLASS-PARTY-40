@@ -35,7 +35,8 @@ host.on('room', (r: RoomState) => { room = r; });
 let taken = new Set<number>();
 let gameMsgs = 0;
 let revealed = 0, explained = 0, wrongTold = 0;
-let props: [number, number][] = []; // 공 위치(0번 봇이 받은 스냅샷에서)
+let props: [number, number][] = [];
+let lvKey = '', lvCache: ReturnType<typeof buildLevel> | null = null; // 공 위치(0번 봇이 받은 스냅샷에서)
 let lastTeams: number[] | undefined;
 host.on('g', (m: { state: any }) => { gameMsgs++; if (m.state?.teams) lastTeams = m.state.teams; taken = new Set(m.state?.taken ?? []); if (m.state?.quiz?.answer !== undefined) revealed++; if (m.state?.quiz?.explain) explained++; });
 const created = await new Promise<CreateRes>((res) => host.emit('host:create', { config: { mode: MODE, rounds: ROUNDS, games: [GAME], chem: { units: arg('units', '3,4').split(',').map(Number), levels: ['easy', 'normal', 'hard'] } } }, res));
@@ -68,7 +69,9 @@ const timer = setInterval(() => {
     const mx = Math.round(Math.sin(t * 0.7 + i) * 60);
     const jump = Math.sin(t * 2.3 + i * 1.7) > 0.6 ? 1 : 0;
     if (SMART && room && room.levelId !== 'lobby') {
-      const lv = buildLevel(room.levelId, room.levelSeed, room.levelQuiz);
+      // 맵은 바뀔 때만 만든다(봇마다 초당 30번씩 만들면 측정하는 컴퓨터의 CPU를 잡아먹는다)
+      if (lvKey !== room.levelKey) { lvKey = room.levelKey; lvCache = buildLevel(room.levelId, room.levelSeed, room.levelQuiz); }
+      const lv = lvCache!;
       const lt = (b.tick - room.levelTick) * DT + 0.1;
       // 2.5초 넘게 남은 발판 중 가장 가까운 곳의 가운데로 간다(원판은 가장 안쪽 반지름 안으로)
       let tx = b.x, tz = b.z, best = 1e9;
@@ -226,6 +229,8 @@ console.log('게임 상태 메시지 수:', gameMsgs, '· 정답 공개:', revea
 if (room!.lastResult) { const ts = room!.lastResult.map((r) => parseFloat(r.detail)).filter((v) => !isNaN(v)).sort((a, c) => a - c); console.log('탈락 시각 분포(초):', [0, 0.25, 0.5, 0.75, 1].map((q) => ts[Math.min(ts.length - 1, Math.floor(q * ts.length))]).join(' / ')); }
 if (room!.lastResult) console.log('결과 상위 5:', room!.lastResult.slice(0, 5).map((r) => `${r.rank}위 ${r.name} +${r.points} (${r.detail})`).join(' | '), '· 하위:', room!.lastResult.slice(-2).map((r) => `${r.rank}위 +${r.points} (${r.detail})`).join(' | '));
 
+const ph = Object.fromEntries(Object.entries(m1.phaseMs ?? {}).map(([k, v]) => [k, +(((v as number) - (m0.phaseMs?.[k] ?? 0)) / ((m1.ticks - m0.ticks) || 1)).toFixed(3)]));
+console.log('틱당 단계별 ms:', JSON.stringify(ph));
 console.log(JSON.stringify({
   bots: BOTS, seconds: +dur.toFixed(1),
   server: {

@@ -7,6 +7,8 @@ export const metrics = {
   ticks: 0,
   // 입력 처리 통계: 실제로 처리한 입력, 어림해서 미리 처리한 걸음, 그 때문에 버린 입력, 입력 없이 쉰 틱
   inputs: 0, guessed: 0, dropped: 0, idle: 0,
+  /** 틱 안 단계별 누적 시간(ms): 물리 월드 갱신, 사람 이동, 몸싸움, 게임 규칙, 보내기 */
+  phase: { world: 0, move: 0, bodies: 0, rules: 0, send: 0 },
 };
 
 export function recordTick(ms: number) {
