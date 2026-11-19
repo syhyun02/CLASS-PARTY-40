@@ -77,7 +77,7 @@ shared/src/            서버와 클라이언트가 함께 쓰는 코드
   levels/              맵 생성기(lobby, race, arenas, maze, quiz, hover, teamball)
   chem/bank.ts         교과 문제은행(물질과 에너지, 과학탐구실험1·2), 과목·단원 정의, 문제 검사·출제 함수
   chem/bank-social.ts  세계시민과 지리, 한국사1·2, 언어생활과 한자 문제
-  chem/bank-integrated.ts  통합사회1·2 문제 — 시드가 같으면 양쪽이 같은 맵을 만든다
+  chem/bank-integrated.ts  통합사회1·2 문제
   sim.ts               Rapier 기반 캐릭터 물리(SimWorld) — 서버 판정과 클라이언트 예측이 같은 코드
   games.ts             미니게임 목록(10종 메타데이터)과 순위→점수 규칙
   protocol.ts          메시지 형식, 스냅샷 바이너리 인코딩
