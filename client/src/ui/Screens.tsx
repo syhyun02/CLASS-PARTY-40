@@ -7,7 +7,7 @@ import { Blob } from './Overlays';
 
 const MODES: { id: GameMode; title: string; sub: string; emoji: string; ready: boolean }[] = [
   { id: 'play', title: '순수 놀이 모드', sub: '달리고 점프하고 피하는 3D 파티 게임', emoji: '🎈', ready: true },
-  { id: 'chem', title: '교과 퀴즈 모드', sub: '물질과 에너지 · 과학탐구실험 · 세계시민과 지리 · 한국사 · 언어생활과 한자', emoji: '⚗️', ready: true },
+  { id: 'chem', title: '교과 퀴즈 모드', sub: '물질과 에너지 · 과학탐구실험 · 통합사회 · 세계시민과 지리 · 한국사 · 언어생활과 한자', emoji: '⚗️', ready: true },
 ];
 
 function Shell({ children, back }: { children: React.ReactNode; back?: () => void }) {

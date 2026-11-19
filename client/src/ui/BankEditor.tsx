@@ -6,7 +6,7 @@ const KEY = 'cp40:bank';
 const LEVELS: QLevel[] = ['easy', 'normal', 'hard'];
 
 const VERSION_KEY = 'cp40:bankVersion';
-const VERSION = 3; // 2: 과학탐구실험1·2 추가, 3: 세계시민과 지리·한국사1·2·언어생활과 한자 추가
+const VERSION = 4; // 2: 과학탐구실험1·2 추가, 3: 세계시민과 지리·한국사1·2·언어생활과 한자 추가, 4: 통합사회1·2 추가
 
 export function loadBank(): BankQ[] {
   try {
@@ -19,7 +19,7 @@ export function loadBank(): BankQ[] {
         if (saved < VERSION) {
           const have = new Set(b.map((q) => q.id));
           // 저장한 뒤에 새로 생긴 과목의 문제만 덧붙인다(직접 지운 예전 문제가 되살아나지 않게)
-          const since = saved < 2 ? 4 : 22;
+          const since = saved < 2 ? 4 : saved < 3 ? 22 : 63;
           b = [...b, ...DEFAULT_BANK.filter((q) => q.unit > since && !have.has(q.id))];
           localStorage.setItem(KEY, JSON.stringify(b));
           localStorage.setItem(VERSION_KEY, String(VERSION));
